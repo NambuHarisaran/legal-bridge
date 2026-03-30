@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+api/node_modules/
+
+# Build output
+frontend/dist/
+frontend/.vite/
+
+# Environment — NEVER commit secrets
+.env
+api/.env
+frontend/.env
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
