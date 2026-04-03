@@ -1,4 +1,11 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import {
+  guardApiRequest,
+  hasPromptInjectionPatterns,
+  sanitizeAiInput,
+  safeLog,
+  sendSafeError,
+} from "./middleware/request-security.js";
 
 const client = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
 const model = client.getGenerativeModel({ model: "gemini-3-flash-preview" });
@@ -43,17 +50,27 @@ function buildFallbackAnalysis(content = "") {
 }
 
 export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  if (req.method === "OPTIONS") return res.status(200).end();
-  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  const guard = await guardApiRequest(req, res, {
+    endpoint: "analyse",
+    method: "POST",
+    maxBodyBytes: 768 * 1024,
+  });
+  if (!guard.ok) return;
 
   try {
     const { content } = req.body;
 
     if (!content || typeof content !== "string") {
-      return res.status(400).json({ error: "content string is required" });
+      return sendSafeError(res, 400, "invalid_payload", "content string is required");
+    }
+
+    const trimmedContent = sanitizeAiInput(content, 12000);
+    if (!trimmedContent) {
+      return sendSafeError(res, 400, "invalid_payload", "content must not be empty");
+    }
+
+    if (hasPromptInjectionPatterns(trimmedContent)) {
+      return sendSafeError(res, 400, "unsafe_prompt", "Input contains disallowed instruction patterns");
     }
 
     const systemPrompt = `You are a legal document analyser for Indian citizens. Given legal document text, respond ONLY with valid JSON (no markdown, no backticks) with these keys:
@@ -67,7 +84,7 @@ export default async function handler(req, res) {
     const response = await model.generateContent({
       contents: [{
         role: "user",
-        parts: [{ text: `Analyse this legal document:\n\n${content.slice(0, 4000)}` }]
+        parts: [{ text: `Analyse this legal document:\n\n${trimmedContent.slice(0, 4000)}` }]
       }],
       systemInstruction: systemPrompt,
       generationConfig: {
@@ -76,7 +93,7 @@ export default async function handler(req, res) {
       },
     });
 
-    const raw = response.response.text() || "{}";
+    const raw = response?.response?.text?.() || "{}";
     const cleaned = raw.replace(/```json|```/g, "").trim();
     try {
       const parsed = JSON.parse(cleaned);
@@ -85,10 +102,16 @@ export default async function handler(req, res) {
       return res.status(200).json(buildFallbackAnalysis(content));
     }
   } catch (err) {
-    console.error("Analyse API error:", err);
+    safeLog("analyse_error", {
+      path: req.path,
+      uid: req.user?.uid,
+      ip: req.ip,
+      message: err?.message,
+      status: err?.status,
+    });
     if (isRetryableQuotaError(err)) {
       return res.status(200).json(buildFallbackAnalysis(req.body?.content || ""));
     }
-    return res.status(500).json({ error: "Document analysis failed. Please try again." });
+    return sendSafeError(res, 500, "analysis_failed", "Unable to process document");
   }
 }

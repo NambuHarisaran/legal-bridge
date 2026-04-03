@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { loginWithEmail, registerWithEmail, loginWithGoogle, completeGoogleRedirectLogin, logout } from "./auth-service.js";
 import { createUserProfile } from "./firestore-service.js";
+import { auth } from "./firebase-config.js";
 import ProfilePage from "./ProfilePage.jsx";
 
 /* ═══════════════════════════════════════════════════════
@@ -38,17 +39,18 @@ const NAV = [
   { id: "schemes",    icon: "🏛",  label: "Govt. Schemes" },
   { id: "document",   icon: "📄", label: "Document Analyser" },
   { id: "fir",        icon: "📋", label: "FIR Guidance" },
+  { id: "complaint",  icon: "📝", label: "Complaint Generator" },
   { id: "history",    icon: "🕘", label: "My Queries History" },
   { id: "profile",    icon: "👤", label: "My Profile" },
   { id: "admin",      icon: "⚙",  label: "Admin Panel" },
 ];
 
 const SCHEMES = [
-  { icon: "🌾", name: "PM Kisan Samman Nidhi Yojana",              desc: "₹6,000/year direct income support for small and marginal farmers." },
-  { icon: "🌿", name: "Pradhan Mantri Fasal Bima Yojana",          desc: "Crop insurance scheme providing financial support to farmers for crop loss." },
-  { icon: "🏗",  name: "Mahatma Gandhi National Rural Employment Guarantee Scheme", desc: "Guarantees 100 days of wage employment per year to rural households." },
-  { icon: "🏠", name: "PM Awas Yojana (Gramin)",                   desc: "Housing for all — financial aid to build pucca houses for BPL families." },
-  { icon: "💊", name: "Ayushman Bharat – PM Jan Arogya Yojana",    desc: "Health coverage up to ₹5 lakh/year for eligible families." },
+  { icon: "🌾", name: "PM Kisan Samman Nidhi Yojana",              desc: "₹6,000/year direct income support for small and marginal farmers.", tags: ["farmer", "income", "rural"] },
+  { icon: "🌿", name: "Pradhan Mantri Fasal Bima Yojana",          desc: "Crop insurance scheme providing financial support to farmers for crop loss.", tags: ["farmer", "crop", "insurance"] },
+  { icon: "🏗",  name: "Mahatma Gandhi National Rural Employment Guarantee Scheme", desc: "Guarantees 100 days of wage employment per year to rural households.", tags: ["rural", "wage", "employment"] },
+  { icon: "🏠", name: "PM Awas Yojana (Gramin)",                   desc: "Housing for all — financial aid to build pucca houses for BPL families.", tags: ["housing", "rural", "family"] },
+  { icon: "💊", name: "Ayushman Bharat – PM Jan Arogya Yojana",    desc: "Health coverage up to ₹5 lakh/year for eligible families.", tags: ["health", "medical", "family"] },
 ];
 
 const FIR_STEPS = [
@@ -74,6 +76,170 @@ const RISK_QUESTIONS = [
   { id: "opponent", label: "Who is the opposing party?",               options: ["Individual","Company","Government dept","Multiple parties"] },
   { id: "action",   label: "Have you taken any legal action so far?",  options: ["Legal notice sent","Filed a complaint","No action yet","Tried informally"] },
 ];
+
+const COMPLAINT_TYPES = [
+  { id: "fir", label: "FIR Complaint", subject: "Request to register FIR", tone: "formal" },
+  { id: "police", label: "Police Complaint", subject: "Complaint regarding incident", tone: "formal" },
+  { id: "consumer", label: "Consumer Complaint", subject: "Consumer grievance and requested remedy", tone: "firm" },
+  { id: "legal_notice", label: "Legal Notice", subject: "Legal notice for remedy and response", tone: "strict" },
+  { id: "general", label: "General Complaint Letter", subject: "Complaint and request for action", tone: "clear" },
+];
+
+function normalizeText(value) {
+  return String(value || "").trim();
+}
+
+function splitLines(value) {
+  return normalizeText(value)
+    .split(/[\n,;]+/)
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+function buildComplaintDraft(form) {
+  const complaintType = COMPLAINT_TYPES.find(item => item.id === form.complaintType) || COMPLAINT_TYPES[0];
+  const parties = splitLines(form.parties);
+  const dates = splitLines(form.dates);
+  const evidence = splitLines(form.evidence);
+  const facts = normalizeText(form.incident);
+  const relief = normalizeText(form.requestedRelief) || "Take appropriate legal and administrative action.";
+  const subject = normalizeText(form.subject) || complaintType.subject;
+  const salutation = complaintType.id === "legal_notice" ? "LEGAL NOTICE" : "COMPLAINT";
+
+  return [
+    `${salutation}`,
+    `Type: ${complaintType.label}`,
+    `Subject: ${subject}`,
+    "",
+    "Respected Sir/Madam,",
+    "",
+    facts ? `I am writing to report the following matter: ${facts}` : "I am writing to report the following matter.",
+    parties.length ? `Parties involved: ${parties.join(", ")}.` : "Parties involved: not specified.",
+    dates.length ? `Important dates: ${dates.join(", ")}.` : "Important dates: not specified.",
+    evidence.length ? `Supporting evidence: ${evidence.join(", ")}.` : "Supporting evidence: not specified.",
+    "",
+    `Requested relief: ${relief}`,
+    "",
+    "I request you to take prompt action and provide a written response at the earliest.",
+    "",
+    "Yours faithfully,",
+    normalizeText(form.name) || "[Name]",
+    normalizeText(form.contact) || "[Contact details]",
+    normalizeText(form.address) || "[Address]",
+  ].join("\n");
+}
+
+function scoreSchemeMatch(scheme, profile) {
+  const profileText = [profile?.caseType, profile?.location, profile?.settings?.language, profile?.name]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  let score = 0;
+  const reasons = [];
+
+  (scheme.tags || []).forEach(tag => {
+    if (profileText.includes(tag.toLowerCase())) {
+      score += 3;
+      reasons.push(`matches your ${tag} need`);
+    }
+  });
+
+  if (profile?.caseType && scheme.name.toLowerCase().includes(String(profile.caseType).toLowerCase().split("/")[0])) {
+    score += 2;
+    reasons.push("matches your case type");
+  }
+
+  if (profile?.location && /(rural|gramin|village|district)/i.test(profile.location) && /rural|gramin|housing|employment|farmer/i.test([scheme.name, scheme.desc].join(" "))) {
+    score += 1;
+    reasons.push("fits a rural beneficiary profile");
+  }
+
+  return { score, reasons };
+}
+
+function getRecommendedSchemes(profile) {
+  return [...SCHEMES]
+    .map(scheme => {
+      const match = scoreSchemeMatch(scheme, profile);
+      return { ...scheme, matchScore: match.score, matchReasons: match.reasons };
+    })
+    .sort((a, b) => b.matchScore - a.matchScore || a.name.localeCompare(b.name));
+}
+
+function getUserDisplayName(user) {
+  const fallback = user?.email ? String(user.email).split("@")[0] : "User";
+  const name = String(user?.name || "").trim();
+  return name || fallback;
+}
+
+function getUserInitial(user) {
+  return getUserDisplayName(user).charAt(0).toUpperCase() || "U";
+}
+
+async function postApi(path, payload) {
+  const token = await auth.currentUser?.getIdToken?.();
+  if (!token) {
+    throw new Error("Session expired. Please sign in again.");
+  }
+
+  const response = await fetch(path, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  let data = null;
+  try {
+    data = await response.json();
+  } catch {
+    data = null;
+  }
+
+  if (!response.ok) {
+    throw new Error(data?.error || `Request failed (${response.status})`);
+  }
+
+  if (data?.error) {
+    throw new Error(data.error);
+  }
+
+  return data || {};
+}
+
+async function postApiUpload(path, file) {
+  const token = await auth.currentUser?.getIdToken?.();
+  if (!token) {
+    throw new Error("Session expired. Please sign in again.");
+  }
+
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await fetch(path, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: formData,
+  });
+
+  let data = null;
+  try {
+    data = await response.json();
+  } catch {
+    data = null;
+  }
+
+  if (!response.ok) {
+    throw new Error(data?.message || data?.error || `Upload failed (${response.status})`);
+  }
+
+  return data || {};
+}
 
 /* ═══════════════════════════════════════════════════════
    TINY HELPERS
@@ -383,10 +549,10 @@ function Sidebar({ page, setPage, user, onLogout }) {
           <div style={{ width:32, height:32, borderRadius:"50%", background:C.accent,
             display:"flex", alignItems:"center", justifyContent:"center",
             fontSize:14, fontWeight:700, color:"#fff" }}>
-            {user.name[0].toUpperCase()}
+            {getUserInitial(user)}
           </div>
           <div>
-            <div style={{ color:"#fff", fontSize:12, fontWeight:600 }}>{user.name}</div>
+            <div style={{ color:"#fff", fontSize:12, fontWeight:600 }}>{getUserDisplayName(user)}</div>
             <div style={{ color:"rgba(255,255,255,.5)", fontSize:10 }}>Rural Citizen</div>
           </div>
         </div>
@@ -424,7 +590,7 @@ function TopBar({ title, user, onProfileClick }) {
           style={{ width:32, height:32, borderRadius:"50%", background:C.blue,
             display:"flex", alignItems:"center", justifyContent:"center",
             fontSize:14, fontWeight:700, color:"#fff", border:"none", cursor:"pointer" }}>
-          {user.name[0].toUpperCase()}
+          {getUserInitial(user)}
         </button>
       </div>
     </div>
@@ -440,15 +606,16 @@ function HomePage({ setPage, user }) {
       <div style={{ marginBottom:24 }}>
         <h2 style={{ fontSize:20, fontWeight:700, color:C.text, margin:"0 0 4px",
           fontFamily:"'Georgia',serif" }}>Welcome to Intelligent Legal Companion</h2>
-        <p style={{ color:C.muted, fontSize:13, margin:0 }}>Hello, {user.name} — how can we assist you today?</p>
+        <p style={{ color:C.muted, fontSize:13, margin:0 }}>Hello, {getUserDisplayName(user)} — how can we assist you today?</p>
       </div>
 
       {/* 3 quick action cards */}
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:14, marginBottom:24 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14, marginBottom:24 }}>
         {[
           { icon:"⚖",  label:"Ask Legal Question",    page:"chatbot",  bg:"#EFF6FF" },
           { icon:"📄", label:"Upload Legal Document",  page:"document", bg:"#F0FDF4" },
           { icon:"🏛", label:"Government Schemes",     page:"schemes",  bg:"#FFF7ED" },
+          { icon:"📝", label:"Complaint Generator",    page:"complaint", bg:"#FDF2F8" },
         ].map(f=>(
           <Card key={f.page} onClick={()=>setPage(f.page)}
             style={{ textAlign:"center", padding:"28px 16px", cursor:"pointer",
@@ -507,7 +674,7 @@ function HomePage({ setPage, user }) {
           <button onClick={()=>setPage("risk")} style={{ width:"100%", marginTop:14,
             background:C.blue, color:"#fff", border:"none", borderRadius:8, padding:"10px",
             fontWeight:600, fontSize:13, cursor:"pointer", fontFamily:"inherit" }}>
-            → Laïdie Now
+            → Launch Now
           </button>
         </Card>
 
@@ -587,25 +754,29 @@ function ChatbotPage({ user, addHistory }) {
     try {
       // Save user message to Firestore
       const { saveChatMessage } = await import("./firestore-service.js");
-      await saveChatMessage(user.uid, userQuestion, "user");
+      const userSave = await saveChatMessage(user.uid, userQuestion, "user");
+      if (!userSave.success) {
+        console.error("Failed to save user chat message:", userSave.error);
+      }
       
       const history = [...msgs, userMsg].slice(-10).map(m=>({ role:m.role, content:m.text }));
-      const res = await fetch("/api/chat", {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({ messages: history })
-      });
-      const data = await res.json();
-      const reply = data.reply || data.error || "Sorry, try again.";
+      const data = await postApi("/api/chat", { messages: history });
+      const reply = data.reply || "Sorry, try again.";
       setMsgs(m=>[...m, { role:"assistant", text:reply }]);
       
       // Save assistant message to Firestore
-      await saveChatMessage(user.uid, reply, "assistant");
+      const assistantSave = await saveChatMessage(user.uid, reply, "assistant");
+      if (!assistantSave.success) {
+        console.error("Failed to save assistant chat message:", assistantSave.error);
+      }
       
       addHistory({ type:"chat", q:userQuestion.slice(0,55), date:new Date().toLocaleDateString() });
-    } catch {
-      setMsgs(m=>[...m, { role:"assistant", text:"⚠ Network error. Please try again." }]);
+    } catch (error) {
+      const message = error?.message || "Network error. Please try again.";
+      setMsgs(m=>[...m, { role:"assistant", text:`⚠ ${message}` }]);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   function resetChat() {
@@ -658,7 +829,7 @@ function ChatbotPage({ user, addHistory }) {
                 {m.role==="user"&&(
                   <div style={{ width:30,height:30,borderRadius:"50%",background:"#E2E8F0",
                     display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,flexShrink:0 }}>
-                    {user.name[0].toUpperCase()}
+                    {getUserInitial(user)}
                   </div>
                 )}
               </div>
@@ -734,29 +905,67 @@ function DocumentPage({ user, addHistory }) {
   const [paste, setPaste] = useState(false);
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
+  const allowedFileTypes = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
+  const maxFileSize = 8 * 1024 * 1024;
+
+  function onFileChange(event) {
+    const selectedFile = event.target.files?.[0];
+    if (!selectedFile) return;
+
+    if (!allowedFileTypes.includes(selectedFile.type)) {
+      setResult({
+        summary: "Only PDF and image files are allowed.",
+        key_points: [],
+        parties: [],
+        dates: [],
+        risks: ["Unsupported file type"],
+        next_steps: ["Choose a PDF, JPG, PNG, or WEBP file."],
+      });
+      setFile(null);
+      return;
+    }
+
+    if (selectedFile.size > maxFileSize) {
+      setResult({
+        summary: "File is too large.",
+        key_points: [],
+        parties: [],
+        dates: [],
+        risks: ["File exceeds 8MB upload limit"],
+        next_steps: ["Compress or split the document before upload."],
+      });
+      setFile(null);
+      return;
+    }
+
+    setResult(null);
+    setFile(selectedFile);
+  }
 
   async function analyse() {
-    const content = paste ? text : (file ? `[File: ${file.name}] Simulated legal document about land ownership in Tamil Nadu — agreement between Nattlee Karesh (buyer) and Sureck Kumer (seller) for 2.56 acre plot, witnessed by Dr Salami Kumer.` : "");
-    if (!content) return;
+    const content = paste ? text : "";
+    if (paste && !content) return;
+    if (!paste && !file) return;
     setLoading(true); setResult(null);
     try {
-      const res = await fetch("/api/analyse", {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({ content })
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
+      const data = paste
+        ? await postApi("/api/analyse", { content })
+        : await postApiUpload("/api/analyse-upload", file);
       setResult(data);
       
       // Save to Firestore
       const { saveDocumentAnalysis } = await import("./firestore-service.js");
-      await saveDocumentAnalysis(user.uid, file?.name || "Pasted text", data);
+      const saveResult = await saveDocumentAnalysis(user.uid, file?.name || "Pasted text", data);
+      if (!saveResult.success) {
+        console.error("Failed to save document analysis:", saveResult.error);
+      }
       
       addHistory({ type:"doc", q:file?.name||"Pasted text", date:new Date().toLocaleDateString() });
-    } catch {
-      setResult({ summary:"Analysis failed. Please try again.", key_points:[], parties:[], dates:[], risks:[], next_steps:[] });
+    } catch (error) {
+      setResult({ summary:error?.message || "Analysis failed. Please try again.", key_points:[], parties:[], dates:[], risks:[], next_steps:[] });
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   return (
@@ -796,8 +1005,8 @@ function DocumentPage({ user, addHistory }) {
               {file?file.name:"Drag & drop or select legal document (PDF / Image)"}
             </div>
             {file&&<div style={{ fontSize:11,color:C.muted }}>{(file.size/1024).toFixed(1)} KB</div>}
-            <input type="file" accept=".pdf,.docx,.txt,.jpg,.png" style={{display:"none"}}
-              onChange={e=>setFile(e.target.files[0])}/>
+            <input type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" style={{display:"none"}}
+              onChange={onFileChange}/>
           </label>
         ) : (
           <textarea value={text} onChange={e=>setText(e.target.value)}
@@ -905,9 +1114,35 @@ function DocumentPage({ user, addHistory }) {
 /* ═══════════════════════════════════════════════════════
    GOVT SCHEMES PAGE
 ═══════════════════════════════════════════════════════ */
-function SchemesPage() {
+function SchemesPage({ user }) {
   const [search, setSearch] = useState("");
-  const filtered = SCHEMES.filter(s=>s.name.toLowerCase().includes(search.toLowerCase()));
+  const [profile, setProfile] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadProfile() {
+      if (!user?.uid) return;
+      try {
+        const { getUserProfile } = await import("./firestore-service.js");
+        const result = await getUserProfile(user.uid);
+        if (active && result.success) {
+          setProfile(result.data);
+        }
+      } catch (error) {
+        console.error("Failed to load scheme profile:", error);
+      }
+    }
+
+    loadProfile();
+    return () => { active = false; };
+  }, [user?.uid]);
+
+  const recommended = getRecommendedSchemes(profile);
+  const filtered = recommended.filter(s => {
+    const haystack = [s.name, s.desc, ...(s.tags || []), ...(s.matchReasons || [])].join(" ").toLowerCase();
+    return haystack.includes(search.toLowerCase());
+  });
   return (
     <div>
       <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20 }}>
@@ -915,7 +1150,12 @@ function SchemesPage() {
           <SectionTitle>Government Schemes for You</SectionTitle>
           <p style={{ color:C.muted,fontSize:13,margin:"-10px 0 0" }}>Find schemes relevant to your situation</p>
         </div>
-        <div style={{ display:"flex",gap:10 }}>
+        <div style={{ display:"flex",gap:10, alignItems:"center", flexWrap:"wrap", justifyContent:"flex-end" }}>
+          {profile && (
+            <Badge color={C.green}>
+              {profile.caseType || "Profile"} recommendation
+            </Badge>
+          )}
           <button style={{ background:C.blue,color:"#fff",border:"none",borderRadius:8,
             padding:"10px 18px",fontWeight:600,fontSize:13,cursor:"pointer",fontFamily:"inherit" }}>
             Manage Legal Database
@@ -950,6 +1190,11 @@ function SchemesPage() {
             <div style={{ flex:1 }}>
               <div style={{ fontWeight:700,fontSize:14,color:C.text,marginBottom:4 }}>{s.name}</div>
               <div style={{ fontSize:13,color:C.muted,lineHeight:1.6 }}>{s.desc}</div>
+              {s.matchReasons?.length > 0 && (
+                <div style={{ display:"flex", flexWrap:"wrap", gap:8, marginTop:10 }}>
+                  {s.matchReasons.map((reason, index) => <Badge key={index} color={C.blue}>{reason}</Badge>)}
+                </div>
+              )}
             </div>
             <button style={{ background:C.blue,color:"#fff",border:"none",borderRadius:8,
               padding:"8px 14px",fontSize:12,fontWeight:600,cursor:"pointer",
@@ -1081,6 +1326,178 @@ function FIRPage() {
 }
 
 /* ═══════════════════════════════════════════════════════
+   COMPLAINT GENERATOR PAGE
+═══════════════════════════════════════════════════════ */
+function ComplaintPage({ user }) {
+  const [form, setForm] = useState({
+    complaintType: "fir",
+    subject: "Request to register FIR",
+    name: user?.name || "",
+    contact: user?.phone || user?.email || "",
+    address: user?.location || "",
+    incident: "",
+    parties: "",
+    dates: "",
+    location: "",
+    evidence: "",
+    requestedRelief: "Register my complaint and take appropriate action.",
+  });
+  const [draft, setDraft] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
+
+  async function generateDraft() {
+    const summary = normalizeText(form.incident);
+    if (!summary) {
+      setMessage("Please describe the incident before generating a draft.");
+      return;
+    }
+
+    setLoading(true);
+    setMessage("");
+
+    try {
+      const nextDraft = buildComplaintDraft(form);
+      setDraft(nextDraft);
+
+      const { saveComplaintDraft } = await import("./firestore-service.js");
+      const saveResult = await saveComplaintDraft(user.uid, {
+        complaintType: form.complaintType,
+        subject: form.subject,
+        incident: form.incident,
+        parties: splitLines(form.parties),
+        dates: splitLines(form.dates),
+        location: form.location,
+        evidence: splitLines(form.evidence),
+        requestedRelief: form.requestedRelief,
+        draftText: nextDraft,
+      });
+
+      if (!saveResult.success) {
+        setMessage(saveResult.error || "Draft generated, but it could not be saved.");
+      } else {
+        setMessage("Draft generated and saved to your history.");
+      }
+    } catch (error) {
+      setMessage(error?.message || "Unable to generate complaint draft.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function copyDraft() {
+    if (!draft) return;
+    try {
+      if (!navigator?.clipboard?.writeText) {
+        throw new Error("Clipboard is not available in this browser context.");
+      }
+      await navigator.clipboard.writeText(draft);
+      setMessage("Draft copied to clipboard.");
+    } catch (error) {
+      setMessage(error?.message || "Failed to copy draft.");
+    }
+  }
+
+  const inputStyle = { width:"100%", border:`1.5px solid ${C.border}`, borderRadius:10,
+    padding:"12px 14px", fontSize:14, fontFamily:"inherit", outline:"none",
+    boxSizing:"border-box", background:"#fff", color:C.text };
+
+  return (
+    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
+      <Card>
+        <SectionTitle>Complaint Generator</SectionTitle>
+        <p style={{ color:C.muted, fontSize:13, margin:"-10px 0 18px" }}>
+          Draft FIRs, police complaints, consumer complaints, legal notices, and general complaint letters.
+        </p>
+
+        <div style={{ marginBottom:14 }}>
+          <label style={{ fontSize:13, fontWeight:600, color:C.text, display:"block", marginBottom:6 }}>Complaint Type</label>
+          <select
+            value={form.complaintType}
+            onChange={e => {
+              const selected = COMPLAINT_TYPES.find(item => item.id === e.target.value) || COMPLAINT_TYPES[0];
+              setForm(current => ({ ...current, complaintType: selected.id, subject: selected.subject }));
+            }}
+            style={{ ...inputStyle, fontFamily:"inherit" }}
+          >
+            {COMPLAINT_TYPES.map(type => <option key={type.id} value={type.id}>{type.label}</option>)}
+          </select>
+        </div>
+
+        <div style={{ marginBottom:14 }}>
+          <label style={{ fontSize:13, fontWeight:600, color:C.text, display:"block", marginBottom:6 }}>Subject</label>
+          <input value={form.subject} onChange={e => setForm(current => ({ ...current, subject: e.target.value }))} style={inputStyle} placeholder="Subject line" />
+        </div>
+
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:12, marginBottom:14 }}>
+          <div>
+            <label style={{ fontSize:13, fontWeight:600, color:C.text, display:"block", marginBottom:6 }}>Your Name</label>
+            <input value={form.name} onChange={e => setForm(current => ({ ...current, name: e.target.value }))} style={inputStyle} placeholder="Name" />
+          </div>
+          <div>
+            <label style={{ fontSize:13, fontWeight:600, color:C.text, display:"block", marginBottom:6 }}>Contact</label>
+            <input value={form.contact} onChange={e => setForm(current => ({ ...current, contact: e.target.value }))} style={inputStyle} placeholder="Phone or email" />
+          </div>
+        </div>
+
+        <div style={{ marginBottom:14 }}>
+          <label style={{ fontSize:13, fontWeight:600, color:C.text, display:"block", marginBottom:6 }}>Address</label>
+          <input value={form.address} onChange={e => setForm(current => ({ ...current, address: e.target.value }))} style={inputStyle} placeholder="Address or location" />
+        </div>
+
+        <div style={{ marginBottom:14 }}>
+          <label style={{ fontSize:13, fontWeight:600, color:C.text, display:"block", marginBottom:6 }}>Incident Summary</label>
+          <textarea value={form.incident} onChange={e => setForm(current => ({ ...current, incident: e.target.value }))} style={{ ...inputStyle, minHeight:110, resize:"vertical" }} placeholder="Describe what happened in simple factual terms" />
+        </div>
+
+        <div style={{ marginBottom:14 }}>
+          <label style={{ fontSize:13, fontWeight:600, color:C.text, display:"block", marginBottom:6 }}>Parties Involved</label>
+          <textarea value={form.parties} onChange={e => setForm(current => ({ ...current, parties: e.target.value }))} style={{ ...inputStyle, minHeight:70, resize:"vertical" }} placeholder="Names, designations, organisations" />
+        </div>
+
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:12, marginBottom:14 }}>
+          <div>
+            <label style={{ fontSize:13, fontWeight:600, color:C.text, display:"block", marginBottom:6 }}>Important Dates</label>
+            <textarea value={form.dates} onChange={e => setForm(current => ({ ...current, dates: e.target.value }))} style={{ ...inputStyle, minHeight:70, resize:"vertical" }} placeholder="Dates, deadlines, timeline" />
+          </div>
+          <div>
+            <label style={{ fontSize:13, fontWeight:600, color:C.text, display:"block", marginBottom:6 }}>Evidence</label>
+            <textarea value={form.evidence} onChange={e => setForm(current => ({ ...current, evidence: e.target.value }))} style={{ ...inputStyle, minHeight:70, resize:"vertical" }} placeholder="Documents, photos, receipts, witnesses" />
+          </div>
+        </div>
+
+        <div style={{ marginBottom:18 }}>
+          <label style={{ fontSize:13, fontWeight:600, color:C.text, display:"block", marginBottom:6 }}>Requested Relief</label>
+          <textarea value={form.requestedRelief} onChange={e => setForm(current => ({ ...current, requestedRelief: e.target.value }))} style={{ ...inputStyle, minHeight:80, resize:"vertical" }} placeholder="What action do you want the authority to take?" />
+        </div>
+
+        {message && <div style={{ background:"#EFF6FF", color:C.blue, padding:"12px 14px", borderRadius:10, marginBottom:14, fontSize:13 }}>{message}</div>}
+
+        <div style={{ display:"flex", gap:10 }}>
+          <button onClick={generateDraft} disabled={loading} style={{ flex:1, background:C.blue, color:"#fff", border:"none", borderRadius:10, padding:"12px", fontWeight:700, fontSize:14, cursor:"pointer", fontFamily:"inherit", opacity:loading?0.7:1 }}>
+            {loading ? "Generating…" : "Generate Draft"}
+          </button>
+          <button onClick={copyDraft} disabled={!draft} style={{ flex:1, background:C.border, color:C.text, border:"none", borderRadius:10, padding:"12px", fontWeight:700, fontSize:14, cursor:"pointer", fontFamily:"inherit" }}>
+            Copy Draft
+          </button>
+        </div>
+      </Card>
+
+      <Card>
+        <SectionTitle>Draft Preview</SectionTitle>
+        {!draft ? (
+          <div style={{ color:C.muted, fontSize:13, lineHeight:1.7, padding:"12px 0" }}>
+            Fill the form on the left and generate a draft. The output will be saved under your account and show up in history.
+          </div>
+        ) : (
+          <pre style={{ whiteSpace:"pre-wrap", fontFamily:"inherit", fontSize:13, lineHeight:1.8, margin:0, padding:"16px", background:C.light, borderRadius:12, border:`1px solid ${C.border}` }}>{draft}</pre>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════
    RISK PAGE
 ═══════════════════════════════════════════════════════ */
 function RiskPage({ user, addHistory }) {
@@ -1092,23 +1509,22 @@ function RiskPage({ user, addHistory }) {
   async function calculate() {
     setLoading(true); setResult(null);
     try {
-      const res = await fetch("/api/risk", {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({ answers })
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
+      const data = await postApi("/api/risk", { answers });
       setResult(data);
       
       // Save to Firestore
       const { saveRiskAssessment } = await import("./firestore-service.js");
-      await saveRiskAssessment(user.uid, answers, data);
+      const saveResult = await saveRiskAssessment(user.uid, answers, data);
+      if (!saveResult.success) {
+        console.error("Failed to save risk assessment:", saveResult.error);
+      }
       
       addHistory({ type:"risk", q:answers.issue, date:new Date().toLocaleDateString() });
-    } catch {
-      setResult({ risk_level:"Medium", risk_score:55, reason:"Could not fully assess. Please consult a legal professional.", urgent_actions:["Gather all documents","Contact DLSA for free advice","Do not sign anything without review"], long_term_advice:"Seek proper legal counsel." });
+    } catch (error) {
+      setResult({ risk_level:"Medium", risk_score:55, reason:error?.message || "Could not fully assess. Please consult a legal professional.", urgent_actions:["Gather all documents","Contact DLSA for free advice","Do not sign anything without review"], long_term_advice:"Seek proper legal counsel." });
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   const rc = result?.risk_level==="High"?C.riskHigh:result?.risk_level==="Medium"?C.riskMed:C.riskLow;
@@ -1192,24 +1608,33 @@ function HistoryPage({ user }) {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("all");
+  const [search, setSearch] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
 
   useEffect(() => {
     loadHistory();
-  }, [user]);
+  }, [user?.uid]);
 
   async function loadHistory() {
+    if (!user?.uid) return;
     setLoading(true);
     try {
       const { getQueryHistory } = await import("./firestore-service.js");
-      const result = await getQueryHistory(user.uid, filter);
+      const result = await getQueryHistory(user.uid, "all");
       if (result.success) {
-        const formatted = result.data.map(item => ({
-          id: item.id,
-          type: item.type === "chat" ? "chat" : item.type === "document" ? "doc" : "risk",
-          q: item.text || item.filename || `Risk Assessment (${item.risk_level})`,
-          date: new Date(item.timestamp?.toDate?.() || item.savedAt?.toDate?.() || item.assessedAt?.toDate?.() || Date.now()).toLocaleDateString(),
-          ...item
-        }));
+        const formatted = result.data.map(item => {
+          const rawDate = item.timestamp?.toDate?.() || item.savedAt?.toDate?.() || item.assessedAt?.toDate?.() || item.generatedAt?.toDate?.() || new Date();
+          return {
+            id: item.id,
+            type: item.type === "chat" ? "chat" : item.type === "document" ? "doc" : item.type === "risk" ? "risk" : "complaint",
+            q: item.text || item.filename || item.subject || item.complaintType || `Risk Assessment (${item.risk_level})`,
+            detail: item.draftText || item.requestedRelief || item.reason || item.summary || "",
+            date: rawDate.toLocaleDateString(),
+            dateValue: rawDate.getTime(),
+            ...item
+          };
+        });
         setHistory(formatted);
       }
     } catch (error) {
@@ -1218,46 +1643,83 @@ function HistoryPage({ user }) {
     setLoading(false);
   }
 
+  const filteredHistory = history.filter(item => {
+    if (filter !== "all" && item.type !== filter) return false;
+    const haystack = [item.q, item.detail, item.subject, item.filename, item.complaintType, item.requestedRelief, item.reason, item.summary]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    if (search && !haystack.includes(search.toLowerCase())) return false;
+    if (fromDate && item.dateValue < new Date(fromDate).getTime()) return false;
+    if (toDate) {
+      const end = new Date(toDate);
+      end.setHours(23, 59, 59, 999);
+      if (item.dateValue > end.getTime()) return false;
+    }
+    return true;
+  });
+
+  const typeOptions = [
+    { key: "all", label: "All", icon: "📚" },
+    { key: "chat", label: "Chats", icon: "💬" },
+    { key: "doc", label: "Docs", icon: "📄" },
+    { key: "risk", label: "Risk", icon: "⚠" },
+    { key: "complaint", label: "Complaints", icon: "📝" },
+  ];
+
   return (
     <div>
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
-        <SectionTitle style={{ margin: 0 }}>🕘 My Queries History</SectionTitle>
-        <div style={{ display:"flex", gap:8 }}>
-          {["all", "chat", "doc", "risk"].map(f => (
-            <button key={f} onClick={() => { setFilter(f); loadHistory(); }}
-              style={{ padding:"8px 12px", borderRadius:8,
-                border: filter === f ? `2px solid ${C.blue}` : `1px solid ${C.border}`,
-                background: filter === f ? C.blueLight : "#fff",
-                color: filter === f ? C.blue : C.muted,
-                fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>
-              {f === "all" ? "All" : f === "chat" ? "💬 Chats" : f === "doc" ? "📄 Docs" : "⚠ Risk"}
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:16, marginBottom:20, flexWrap:"wrap" }}>
+        <div>
+          <SectionTitle style={{ margin: 0 }}>🕘 My Queries History</SectionTitle>
+          <div style={{ fontSize:13, color:C.muted, marginTop:4 }}>Review your chats, analysis results, risk reports, and generated complaint drafts.</div>
+        </div>
+        <button onClick={loadHistory} style={{ background:C.blue, color:"#fff", border:"none", borderRadius:8, padding:"10px 16px", fontWeight:600, fontSize:13, cursor:"pointer", fontFamily:"inherit" }}>
+          Refresh
+        </button>
+      </div>
+
+      <Card style={{ marginBottom:16 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12 }}>
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search history" style={{ width:"100%", border:`1.5px solid ${C.border}`, borderRadius:10, padding:"10px 12px", fontSize:13, fontFamily:"inherit", outline:"none" }} />
+          <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} style={{ width:"100%", border:`1.5px solid ${C.border}`, borderRadius:10, padding:"10px 12px", fontSize:13, fontFamily:"inherit", outline:"none" }} />
+          <input type="date" value={toDate} onChange={e => setToDate(e.target.value)} style={{ width:"100%", border:`1.5px solid ${C.border}`, borderRadius:10, padding:"10px 12px", fontSize:13, fontFamily:"inherit", outline:"none" }} />
+          <button onClick={() => { setSearch(""); setFromDate(""); setToDate(""); setFilter("all"); }} style={{ background:C.light, color:C.text, border:`1px solid ${C.border}`, borderRadius:10, padding:"10px 12px", fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>
+            Clear Filters
+          </button>
+        </div>
+        <div style={{ display:"flex", gap:8, marginTop:12, flexWrap:"wrap" }}>
+          {typeOptions.map(option => (
+            <button key={option.key} onClick={() => setFilter(option.key)} style={{ padding:"8px 12px", borderRadius:8, border: filter === option.key ? `2px solid ${C.blue}` : `1px solid ${C.border}`, background: filter === option.key ? C.blueLight : "#fff", color: filter === option.key ? C.blue : C.muted, fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>
+              {option.icon} {option.label}
             </button>
           ))}
         </div>
-      </div>
+      </Card>
 
       {loading ? (
         <Card style={{ textAlign:"center", padding:48 }}>
           <Spinner size={32} />
           <div style={{ marginTop:12, color:C.muted }}>Loading history...</div>
         </Card>
-      ) : history.length === 0 ? (
+      ) : filteredHistory.length === 0 ? (
         <Card style={{ textAlign:"center", padding:48 }}>
           <div style={{ fontSize:48, marginBottom:14 }}>📂</div>
-          <div style={{ fontWeight:600, color:C.text, marginBottom:8 }}>No activity yet</div>
-          <div style={{ fontSize:13, color:C.muted }}>Start by using the AI chatbot, uploading a document, or checking your risk score.</div>
+          <div style={{ fontWeight:600, color:C.text, marginBottom:8 }}>No matching activity</div>
+          <div style={{ fontSize:13, color:C.muted }}>Adjust the filters or start a new chat, analysis, risk check, or complaint draft.</div>
         </Card>
       ) : (
         <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-          {[...history].reverse().map((h,i)=>(
+          {[...filteredHistory].reverse().map((h,i)=>(
             <Card key={i} style={{ display:"flex", alignItems:"center", gap:14 }}>
-              <span style={{ fontSize:22 }}>{h.type==="chat"?"💬":h.type==="doc"?"📄":"⚠"}</span>
+              <span style={{ fontSize:22 }}>{h.type==="chat"?"💬":h.type==="doc"?"📄":h.type==="risk"?"⚠":"📝"}</span>
               <div style={{ flex:1 }}>
                 <div style={{ fontSize:14, fontWeight:600, color:C.text }}>{h.q}</div>
-                <div style={{ fontSize:12, color:C.muted }}>{h.date}</div>
+                {h.detail && <div style={{ fontSize:12, color:C.muted, marginTop:3, lineHeight:1.5 }}>{h.detail}</div>}
+                <div style={{ fontSize:12, color:C.muted, marginTop:4 }}>{h.date}</div>
               </div>
-              <Badge color={h.type==="chat"?C.blue:h.type==="doc"?C.green:C.amber}>
-                {h.type==="chat"?"Chat":h.type==="doc"?"Document":"Risk"}
+              <Badge color={h.type==="chat"?C.blue:h.type==="doc"?C.green:h.type==="risk"?C.amber:C.red}>
+                {h.type==="chat"?"Chat":h.type==="doc"?"Document":h.type==="risk"?"Risk":"Complaint"}
               </Badge>
             </Card>
           ))}
@@ -1328,8 +1790,9 @@ export default function App() {
     home:     <HomePage setPage={setPage} user={user}/>,
     chatbot:  <ChatbotPage user={user} addHistory={addHistory}/>,
     document: <DocumentPage user={user} addHistory={addHistory}/>,
-    schemes:  <SchemesPage/>,
+    schemes:  <SchemesPage user={user}/>,
     fir:      <FIRPage/>,
+    complaint:<ComplaintPage user={user}/>,
     risk:     <RiskPage user={user} addHistory={addHistory}/>,
     history:  <HistoryPage user={user}/>,
     profile:  <ProfilePage user={user} onProfileUpdate={u=>setUser(u)}/>,

@@ -1,14 +1,104 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Each signed-in user can read/write only their own root profile doc.
-    match /users/{uid} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
 
-      // Each signed-in user can read/write only docs under their own subcollections.
-      match /{subCollection}/{docId} {
-        allow read, write: if request.auth != null && request.auth.uid == uid;
+    function validShortString(value, maxLen) {
+      return value is string && value.size() > 0 && value.size() <= maxLen;
+    }
+
+    function validOptionalString(value, maxLen) {
+      return !(value is string) || value.size() <= maxLen;
+    }
+
+    function validStringList(value, maxItems, maxItemLen) {
+      return value is list && value.size() <= maxItems;
+    }
+
+    function validUserProfile() {
+      return request.resource.data.keys().hasOnly([
+        'name', 'email', 'phone', 'location', 'caseType', 'settings', 'createdAt', 'updatedAt'
+      ]) &&
+      validShortString(request.resource.data.name, 120) &&
+      validOptionalString(request.resource.data.email, 160) &&
+      validOptionalString(request.resource.data.phone, 30) &&
+      validOptionalString(request.resource.data.location, 120) &&
+      validOptionalString(request.resource.data.caseType, 120) &&
+      (request.resource.data.settings is map || !('settings' in request.resource.data));
+    }
+
+    function validChatDoc() {
+      return request.resource.data.keys().hasOnly(['role', 'text', 'timestamp']) &&
+      request.resource.data.role in ['user', 'assistant'] &&
+      validShortString(request.resource.data.text, 4000);
+    }
+
+    function validDocumentDoc() {
+      return request.resource.data.keys().hasOnly(['filename', 'analysis', 'savedAt']) &&
+      validShortString(request.resource.data.filename, 180) &&
+      request.resource.data.analysis is map;
+    }
+
+    function validRiskDoc() {
+      return request.resource.data.keys().hasOnly(['answers', 'result', 'risk_level', 'assessedAt']) &&
+      request.resource.data.answers is map &&
+      request.resource.data.result is map &&
+      validOptionalString(request.resource.data.risk_level, 20);
+    }
+
+    function validComplaintDoc() {
+      return request.resource.data.keys().hasOnly([
+        'complaintType', 'subject', 'incident', 'parties', 'dates', 'location', 'evidence', 'requestedRelief', 'draftText', 'generatedAt'
+      ]) &&
+      validShortString(request.resource.data.complaintType, 40) &&
+      validShortString(request.resource.data.subject, 180) &&
+      validOptionalString(request.resource.data.incident, 6000) &&
+      validStringList(request.resource.data.parties, 30, 180) &&
+      validStringList(request.resource.data.dates, 30, 80) &&
+      validStringList(request.resource.data.evidence, 50, 200) &&
+      validOptionalString(request.resource.data.location, 240) &&
+      validOptionalString(request.resource.data.requestedRelief, 3000) &&
+      validOptionalString(request.resource.data.draftText, 10000);
+    }
+
+    match /users/{uid} {
+      allow read: if isOwner(uid);
+      allow create, update: if isOwner(uid) && validUserProfile();
+      allow delete: if false;
+
+      match /chats/{docId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validChatDoc();
+        allow delete: if false;
       }
+
+      match /documents/{docId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validDocumentDoc();
+        allow delete: if false;
+      }
+
+      match /risk_assessments/{docId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validRiskDoc();
+        allow delete: if false;
+      }
+
+      match /complaints/{docId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validComplaintDoc();
+        allow delete: if false;
+      }
+
+      match /{document=**} {
+        allow read, write: if false;
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

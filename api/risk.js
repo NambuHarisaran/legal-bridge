@@ -1,4 +1,11 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import {
+  guardApiRequest,
+  hasPromptInjectionPatterns,
+  sanitizeAiInput,
+  safeLog,
+  sendSafeError,
+} from "./middleware/request-security.js";
 
 const client = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
 const model = client.getGenerativeModel({ model: "gemini-3-flash-preview" });
@@ -40,20 +47,45 @@ function buildFallbackRisk(answers = {}) {
 }
 
 export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  if (req.method === "OPTIONS") return res.status(200).end();
-  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  const guard = await guardApiRequest(req, res, {
+    endpoint: "risk",
+    method: "POST",
+    maxBodyBytes: 256 * 1024,
+  });
+  if (!guard.ok) return;
 
   try {
     const { answers } = req.body;
+    const allowedKeys = new Set(["issue", "amount", "docs", "deadline", "action"]);
 
-    if (!answers || typeof answers !== "object") {
-      return res.status(400).json({ error: "answers object is required" });
+    if (!answers || typeof answers !== "object" || Array.isArray(answers)) {
+      return sendSafeError(res, 400, "invalid_payload", "answers object is required");
     }
 
-    const summary = Object.entries(answers)
+    const unknownKeys = Object.keys(answers).filter((key) => !allowedKeys.has(key));
+    if (unknownKeys.length > 0) {
+      return sendSafeError(res, 400, "invalid_payload", "answers contains unsupported fields");
+    }
+
+    const cleanedAnswers = Object.entries(answers)
+      .reduce((acc, [key, value]) => {
+        const normalized = sanitizeAiInput(value, 600);
+        if (normalized) {
+          acc[key] = normalized;
+        }
+        return acc;
+      }, {});
+
+    if (Object.keys(cleanedAnswers).length === 0) {
+      return sendSafeError(res, 400, "invalid_payload", "answers must include at least one non-empty value");
+    }
+
+    const combinedText = Object.values(cleanedAnswers).join(" ");
+    if (hasPromptInjectionPatterns(combinedText)) {
+      return sendSafeError(res, 400, "unsafe_prompt", "Input contains disallowed instruction patterns");
+    }
+
+    const summary = Object.entries(cleanedAnswers)
       .map(([k, v]) => `${k}: ${v}`)
       .join("\n");
 
@@ -76,19 +108,25 @@ export default async function handler(req, res) {
       },
     });
 
-    const raw = response.response.text() || "{}";
+    const raw = response?.response?.text?.() || "{}";
     const cleaned = raw.replace(/```json|```/g, "").trim();
     try {
       const parsed = JSON.parse(cleaned);
       return res.status(200).json(parsed);
     } catch {
-      return res.status(200).json(buildFallbackRisk(answers));
+      return res.status(200).json(buildFallbackRisk(cleanedAnswers));
     }
   } catch (err) {
-    console.error("Risk API error:", err);
+    safeLog("risk_error", {
+      path: req.path,
+      uid: req.user?.uid,
+      ip: req.ip,
+      message: err?.message,
+      status: err?.status,
+    });
     if (isRetryableQuotaError(err)) {
       return res.status(200).json(buildFallbackRisk(req.body?.answers));
     }
-    return res.status(500).json({ error: "Risk assessment failed. Please try again." });
+    return sendSafeError(res, 500, "risk_assessment_failed", "Unable to process risk assessment");
   }
 }

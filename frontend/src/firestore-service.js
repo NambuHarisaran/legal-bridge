@@ -250,6 +250,29 @@ export async function saveRiskAssessment(uid, answers, result) {
   }
 }
 
+export async function saveComplaintDraft(uid, draft) {
+  try {
+    const complaintRef = collection(db, 'users', uid, 'complaints');
+    const result = await addDoc(complaintRef, {
+      complaintType: draft.complaintType,
+      subject: draft.subject,
+      incident: draft.incident,
+      parties: draft.parties || [],
+      dates: draft.dates || [],
+      location: draft.location || '',
+      evidence: draft.evidence || '',
+      requestedRelief: draft.requestedRelief || '',
+      draftText: draft.draftText,
+      generatedAt: serverTimestamp()
+    });
+    return { success: true, id: result.id };
+  } catch (error) {
+    console.error('Error saving complaint draft:', error);
+    const normalized = normalizeFirestoreError(error);
+    return { success: false, error: normalized.message, code: normalized.code };
+  }
+}
+
 export async function getRiskAssessmentHistory(uid) {
   try {
     const q = collection(db, 'users', uid, 'risk_assessments');
@@ -303,11 +326,22 @@ export async function getQueryHistory(uid, type = 'all') {
       }));
       allHistory.push(...risks);
     }
+
+    if (type === 'complaint' || type === 'all') {
+      const complaintRef = collection(db, 'users', uid, 'complaints');
+      const complaintSnap = await getDocs(complaintRef);
+      const complaints = complaintSnap.docs.map(doc => ({
+        id: doc.id,
+        type: 'complaint',
+        ...doc.data()
+      }));
+      allHistory.push(...complaints);
+    }
     
     // Sort by timestamp
     allHistory.sort((a, b) => {
-      const timeA = getTimeValue(a.timestamp || a.savedAt || a.assessedAt);
-      const timeB = getTimeValue(b.timestamp || b.savedAt || b.assessedAt);
+      const timeA = getTimeValue(a.timestamp || a.savedAt || a.assessedAt || a.generatedAt);
+      const timeB = getTimeValue(b.timestamp || b.savedAt || b.assessedAt || b.generatedAt);
       return timeB - timeA;
     });
     

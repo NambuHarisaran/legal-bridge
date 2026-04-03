@@ -1,4 +1,11 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import {
+  guardApiRequest,
+  hasPromptInjectionPatterns,
+  sanitizeAiInput,
+  safeLog,
+  sendSafeError,
+} from "./middleware/request-security.js";
 
 const client = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
 const model = client.getGenerativeModel({ model: "gemini-3-flash-preview" });
@@ -38,18 +45,46 @@ function buildFallbackReply(messages) {
 }
 
 export default async function handler(req, res) {
-  // CORS headers
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  if (req.method === "OPTIONS") return res.status(200).end();
-  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  const guard = await guardApiRequest(req, res, {
+    endpoint: "chat",
+    method: "POST",
+    maxBodyBytes: 256 * 1024,
+  });
+  if (!guard.ok) return;
 
   try {
     const { messages } = req.body;
 
-    if (!messages || !Array.isArray(messages)) {
-      return res.status(400).json({ error: "messages array is required" });
+    if (!Array.isArray(messages)) {
+      return sendSafeError(res, 400, "invalid_payload", "messages must be an array");
+    }
+
+    if (messages.length === 0 || messages.length > 20) {
+      return sendSafeError(res, 400, "invalid_payload", "messages must contain 1 to 20 items");
+    }
+
+    const sanitizedMessages = messages
+      .filter((msg) => msg && typeof msg === "object")
+      .map((msg) => {
+        const content = sanitizeAiInput(msg.content, 1000);
+        const role = msg.role === "user" ? "user" : "model";
+        return { role, content };
+      })
+      .filter((msg) => msg.content.length > 0)
+      .slice(-10);
+
+    if (sanitizedMessages.length === 0) {
+      return sendSafeError(res, 400, "invalid_payload", "messages must include non-empty content");
+    }
+
+    const totalChars = sanitizedMessages.reduce((acc, msg) => acc + msg.content.length, 0);
+    if (totalChars > 8000) {
+      return sendSafeError(res, 400, "invalid_payload", "messages are too long");
+    }
+
+    const suspicious = sanitizedMessages.some((msg) => msg.role === "user" && hasPromptInjectionPatterns(msg.content));
+    if (suspicious) {
+      return sendSafeError(res, 400, "unsafe_prompt", "Input contains disallowed instruction patterns");
     }
 
     const systemPrompt = `You are a friendly AI Legal Assistant for "Legal Bridge", a platform helping rural Indian citizens understand legal matters.
@@ -61,8 +96,8 @@ export default async function handler(req, res) {
 - If asked in Tamil or Tanglish, reply accordingly`;
 
     // Convert messages to Gemini format
-    const formattedMessages = messages.slice(-10).map(msg => ({
-      role: msg.role === "user" ? "user" : "model",
+    const formattedMessages = sanitizedMessages.map(msg => ({
+      role: msg.role,
       parts: [{ text: msg.content }]
     }));
 
@@ -75,13 +110,19 @@ export default async function handler(req, res) {
       },
     });
 
-    const text = response.response.text() || "Sorry, I could not process that. Please try again.";
+    const text = response?.response?.text?.() || "Sorry, I could not process that. Please try again.";
     return res.status(200).json({ reply: text });
   } catch (err) {
-    console.error("Chat API error:", err);
+    safeLog("chat_error", {
+      path: req.path,
+      uid: req.user?.uid,
+      ip: req.ip,
+      message: err?.message,
+      status: err?.status,
+    });
     if (isRetryableQuotaError(err)) {
       return res.status(200).json({ reply: buildFallbackReply(req.body?.messages) });
     }
-    return res.status(500).json({ error: "AI service error. Please try again." });
+    return sendSafeError(res, 500, "ai_service_error", "Unable to process request");
   }
 }
