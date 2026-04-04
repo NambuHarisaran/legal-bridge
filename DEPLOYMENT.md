@@ -1,4 +1,4 @@
-# Legal Bridge — Setup & Deployment Guide
+# Legal Brdige — Setup & Deployment Guide
 
 ## Project Structure
 
@@ -13,7 +13,7 @@ legal-bridge/
 │   └── .env.example
 ├── frontend/                   ← React + Vite app
 │   ├── src/
-│   │   ├── App.jsx             ← Full Legal Bridge UI
+│   │   ├── App.jsx             ← Full Legal Brdige UI
 │   │   └── main.jsx
 │   ├── index.html
 │   ├── vite.config.js          ← Proxies /api/* to localhost:3001 in dev
@@ -90,7 +90,7 @@ Open **two terminal windows**:
 cd legal-bridge/api
 node server.js
 # You should see:
-# ✅  Legal Bridge API running on http://localhost:3001
+# ✅  Legal Brdige API running on http://localhost:3001
 ```
 
 **Terminal 2 — Start the frontend:**
@@ -114,7 +114,7 @@ You need a GitHub account. Then:
 # From the legal-bridge folder:
 git init
 git add .
-git commit -m "Initial commit — Legal Bridge"
+git commit -m "Initial commit — Legal Brdige"
 ```
 
 Go to **https://github.com/new** and create a new repository called `legal-bridge`.

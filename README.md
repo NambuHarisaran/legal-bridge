@@ -1,6 +1,6 @@
-# Legal Bridge
+# Legal Brdige
 
-Legal Bridge is an AI-powered legal assistance platform focused on helping users understand legal issues, assess legal risk, and analyze legal documents.
+Legal Brdige is an AI-powered legal assistance platform focused on helping users understand legal issues, assess legal risk, and analyze legal documents.
 
 ## Features
 

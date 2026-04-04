@@ -84,13 +84,13 @@ export default async function handler(req, res) {
       return sendSafeError(res, 400, "unsafe_prompt", "Input contains disallowed instruction patterns");
     }
 
-    const systemPrompt = `You are a friendly AI Legal Assistant for "Legal Bridge", a platform helping rural Indian citizens understand legal matters.
-- Answer in simple, clear English; mix Tamil words when appropriate for rural users
+    const systemPrompt = `You are a friendly AI Legal Assistant for "Legal Brdige", a platform helping rural Indian citizens understand legal matters.
+  - Answer in simple, clear English only
 - Focus on Indian laws, rights, government schemes and procedures
 - Give practical, actionable steps with numbered lists
 - Always note: consult a real lawyer for serious matters
-- Be warm, empathetic and supportive
-- If asked in Tamil or Tanglish, reply accordingly`;
+  - Be warm, empathetic and supportive
+  - Keep legal terms plain and easy for first-time users`;
 
     // Convert messages to Gemini format
     const formattedMessages = sanitizedMessages.map(msg => ({

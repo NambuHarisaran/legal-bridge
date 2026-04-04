@@ -1,4 +1,4 @@
-# 🚀 Legal Bridge Implementation Complete
+# 🚀 Legal Brdige Implementation Complete
 
 ## What's Been Built
 
@@ -84,7 +84,7 @@ npm run dev  # Starts on http://localhost:3001
 
 Expected output:
 ```
-✅  Legal Bridge API running on http://localhost:3001
+✅  Legal Brdige API running on http://localhost:3001
    POST /api/chat
    POST /api/analyse
    POST /api/risk

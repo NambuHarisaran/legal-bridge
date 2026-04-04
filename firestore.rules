@@ -19,14 +19,17 @@ service cloud.firestore {
 
     function validUserProfile() {
       return request.resource.data.keys().hasOnly([
-        'name', 'email', 'phone', 'location', 'caseType', 'role', 'settings', 'createdAt', 'updatedAt'
+        'uid', 'name', 'email', 'photoURL', 'phone', 'location', 'caseType', 'role', 'settings', 'createdAt', 'updatedAt'
       ]) &&
+      validShortString(request.resource.data.uid, 128) &&
       validShortString(request.resource.data.name, 120) &&
       validOptionalString(request.resource.data.email, 160) &&
+      validOptionalString(request.resource.data.photoURL, 500) &&
       validOptionalString(request.resource.data.phone, 30) &&
       validOptionalString(request.resource.data.location, 120) &&
       validOptionalString(request.resource.data.caseType, 120) &&
       validOptionalString(request.resource.data.role, 24) &&
+      request.resource.data.uid == request.auth.uid &&
       (request.resource.data.settings is map || !('settings' in request.resource.data));
     }
 
@@ -41,22 +44,40 @@ service cloud.firestore {
     }
 
     function validChatDoc() {
-      return request.resource.data.keys().hasOnly(['role', 'text', 'timestamp']) &&
+      return request.resource.data.keys().hasOnly(['role', 'text', 'conversationId', 'timestamp']) &&
       request.resource.data.role in ['user', 'assistant'] &&
-      validShortString(request.resource.data.text, 4000);
+      validShortString(request.resource.data.text, 4000) &&
+      validOptionalString(request.resource.data.conversationId, 120);
     }
 
     function validDocumentDoc() {
-      return request.resource.data.keys().hasOnly(['filename', 'analysis', 'savedAt']) &&
+      return request.resource.data.keys().hasOnly([
+        'filename', 'summary', 'key_points', 'parties', 'dates', 'risks', 'next_steps',
+        'ingestionMode', 'ingestionConfidence', 'extractedChars', 'extractedPreview', 'savedAt'
+      ]) &&
       validShortString(request.resource.data.filename, 180) &&
-      request.resource.data.analysis is map;
+      validOptionalString(request.resource.data.summary, 6000) &&
+      validStringList(request.resource.data.key_points, 20, 500) &&
+      validStringList(request.resource.data.parties, 20, 180) &&
+      validStringList(request.resource.data.dates, 20, 120) &&
+      validStringList(request.resource.data.risks, 20, 500) &&
+      validStringList(request.resource.data.next_steps, 20, 500) &&
+      validOptionalString(request.resource.data.ingestionMode, 60) &&
+      (!(request.resource.data.ingestionConfidence is number) || request.resource.data.ingestionConfidence >= 0) &&
+      (!(request.resource.data.extractedChars is int) || request.resource.data.extractedChars >= 0) &&
+      validOptionalString(request.resource.data.extractedPreview, 4000);
     }
 
     function validRiskDoc() {
-      return request.resource.data.keys().hasOnly(['answers', 'result', 'risk_level', 'assessedAt']) &&
+      return request.resource.data.keys().hasOnly([
+        'answers', 'risk_level', 'risk_score', 'reason', 'urgent_actions', 'long_term_advice', 'assessedAt'
+      ]) &&
       request.resource.data.answers is map &&
-      request.resource.data.result is map &&
-      validOptionalString(request.resource.data.risk_level, 20);
+      validOptionalString(request.resource.data.risk_level, 20) &&
+      (!(request.resource.data.risk_score is int) || (request.resource.data.risk_score >= 0 && request.resource.data.risk_score <= 100)) &&
+      validOptionalString(request.resource.data.reason, 4000) &&
+      validStringList(request.resource.data.urgent_actions, 20, 300) &&
+      validOptionalString(request.resource.data.long_term_advice, 3000);
     }
 
     function validComplaintDoc() {
@@ -91,7 +112,7 @@ service cloud.firestore {
       allow update: if isOwner(uid) && validUserProfileUpdate();
       allow delete: if false;
 
-      match /chats/{docId} {
+      match /conversations/{docId} {
         allow read: if isOwner(uid);
         allow create, update: if isOwner(uid) && validChatDoc();
         allow delete: if false;

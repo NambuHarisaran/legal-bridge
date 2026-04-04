@@ -62,7 +62,7 @@ app.get("/api/health", (_, res) => res.json({ status: "ok", protected: true }));
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-  console.log(`\n✅  Legal Bridge API running on http://localhost:${PORT}`);
+  console.log(`\n✅  Legal Brdige API running on http://localhost:${PORT}`);
   console.log(`   POST /api/chat`);
   console.log(`   POST /api/analyse`);
   console.log(`   POST /api/analyse-upload`);

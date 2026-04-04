@@ -269,7 +269,7 @@ export default function ProfilePage({ user, onProfileUpdate }) {
           <SectionTitle>About</SectionTitle>
           <div style={{ fontSize:13, color:C.muted, lineHeight:1.6 }}>
             <div style={{ marginBottom:12 }}>
-              <strong>Legal Bridge</strong> is your AI-powered legal companion for rural Indian citizens.
+              <strong>Legal Brdige</strong> is your AI-powered legal companion for rural Indian citizens.
             </div>
             <div style={{ marginBottom:12 }}>
               <strong>Version:</strong> 1.0.0

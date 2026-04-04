@@ -287,9 +287,9 @@ function Card({ children, style, onClick }) {
   );
 }
 
-function SectionTitle({ children }) {
+function SectionTitle({ children, style }) {
   return <h2 style={{ fontSize:18, fontWeight:700, color:C.text, margin:"0 0 16px",
-    fontFamily:"'Georgia',serif" }}>{children}</h2>;
+    fontFamily:"'Georgia',serif", ...style }}>{children}</h2>;
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -453,7 +453,7 @@ function LoginPage({ onLogin }) {
             {mode === "login" ? "Login" : "Create Account"}
           </h2>
           <p style={{ fontSize:13, color:C.muted, margin:"0 0 24px" }}>
-            {mode === "login" ? "Welcome back! Sign in to continue." : "Join Legal Bridge today."}
+            {mode === "login" ? "Welcome back! Sign in to continue." : "Join Legal Brdige today."}
           </p>
 
           {/* Google Sign-In Button */}
@@ -703,7 +703,7 @@ function HomePage({ setPage, user }) {
               display:"flex", alignItems:"center", justifyContent:"center", fontSize:14, flexShrink:0 }}>👤</div>
             <div style={{ background:C.blueLight, borderRadius:"0 12px 12px 12px",
               padding:"10px 14px", fontSize:13, color:C.text, flex:1 }}>
-              Land problem inukka enna panna?
+              I have a land dispute. What should I do first?
             </div>
           </div>
           <div style={{ background:"#F8FAFC", borderRadius:10, padding:"12px 14px",
@@ -729,7 +729,7 @@ function HomePage({ setPage, user }) {
               <option>Popular legal questions</option>
             </select>
           </div>
-          {["Land boundary problem na enna panna?","Rental agreement egal syppain?","Police complaint egal poodem?"].map((s,i)=>(
+          {["How do I handle a land boundary dispute?","What should I check before signing a rental agreement?","How can I file a police complaint?"].map((s,i)=>(
             <div key={i} style={{ display:"flex", gap:6, marginBottom:5 }}>
               <span style={{ color:C.blue, fontSize:13 }}>•</span>
               <span style={{ fontSize:12, color:C.text }}>{s}</span>
@@ -754,7 +754,7 @@ function HomePage({ setPage, user }) {
 ═══════════════════════════════════════════════════════ */
 function ChatbotPage({ user, addHistory }) {
   const [msgs, setMsgs] = useState([
-    { role:"assistant", text:"Vanakkam! 🙏 I am your AI Legal Assistant. Ask me any legal question in English, Tamil, or Tanglish.\n\nExample: \"Land problem na enna pananum?\"" }
+    { role:"assistant", text:"Hello! I am your AI Legal Assistant. Ask any legal question in clear English.\n\nExample: \"I have a land dispute. What are my legal options?\"" }
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -798,7 +798,7 @@ function ChatbotPage({ user, addHistory }) {
 
   function resetChat() {
     setMsgs([
-      { role:"assistant", text:"Vanakkam! 🙏 I am your AI Legal Assistant. Ask me any legal question in English, Tamil, or Tanglish.\n\nExample: \"Land problem na enna pananum?\"" }
+      { role:"assistant", text:"Hello! I am your AI Legal Assistant. Ask any legal question in clear English.\n\nExample: \"I have a land dispute. What are my legal options?\"" }
     ]);
     setInput("");
   }
@@ -807,7 +807,7 @@ function ChatbotPage({ user, addHistory }) {
     "My landlord is not returning my deposit. What to do?",
     "Land dispute with neighbour — how to file case?",
     "How to apply for free legal aid?",
-    "என் நில ஆவணம் தொலைந்துவிட்டது. என்ன செய்வது?",
+    "I lost my land document. What should I do?",
   ];
 
   return (
@@ -1051,7 +1051,7 @@ function DocumentPage({ user, addHistory }) {
           <div style={{ background:"#F8FAFC",borderRadius:10,padding:"12px 14px",
             border:`1px solid ${C.border}`,marginBottom:14 }}>
             <div style={{ fontSize:13,fontWeight:600,color:C.text,marginBottom:8 }}>Scanning Document…</div>
-            {["Owner: Nattlee Karesh, Buyer: Sureck Kumer","Agreement Date: 2.56 Acre","Witness: Dr Salemi Kumer"].map((t,i)=>(
+            {["Owner: Sample Owner, Buyer: Sample Buyer","Agreement date: 27 February 2026","Witness: Sample Witness"].map((t,i)=>(
               <div key={i} style={{ display:"flex",gap:8,marginBottom:5 }}>
                 <span style={{ color:C.blue }}>•</span>
                 <span style={{ fontSize:12,color:C.text }}>{t}</span>
@@ -1072,7 +1072,7 @@ function DocumentPage({ user, addHistory }) {
           border:`1px solid ${C.border}`,borderRadius:8,padding:"8px 12px",
           background:"#FAFBFF" }}>
           <span style={{ fontSize:12,color:C.muted,flex:1 }}>Type your legal question here…</span>
-          <span style={{ fontSize:13,color:C.muted }}>Thip fan comendi</span>
+          <span style={{ fontSize:13,color:C.muted }}>Ask a follow-up</span>
         </div>
       </Card>
 
@@ -1825,12 +1825,12 @@ function HistoryPage({ user }) {
       const result = await getQueryHistory(user.uid, "all");
       if (result.success) {
         const formatted = result.data.map(item => {
-          const rawDate = item.timestamp?.toDate?.() || item.savedAt?.toDate?.() || item.assessedAt?.toDate?.() || item.generatedAt?.toDate?.() || new Date();
+          const rawDate = item.timestamp?.toDate?.() || item.savedAt?.toDate?.() || item.assessedAt?.toDate?.() || item.generatedAt?.toDate?.() || item.createdAt?.toDate?.() || new Date();
           return {
             id: item.id,
-            type: item.type === "chat" ? "chat" : item.type === "document" ? "doc" : item.type === "risk" ? "risk" : "complaint",
-            q: item.text || item.filename || item.subject || item.complaintType || `Risk Assessment (${item.risk_level})`,
-            detail: item.draftText || item.requestedRelief || item.reason || item.summary || "",
+            type: item.type === "chat" ? "chat" : item.type === "document" ? "doc" : item.type === "risk" ? "risk" : item.type === "scheme" ? "scheme" : "complaint",
+            q: item.text || item.filename || item.subject || item.schemeName || item.complaintType || `Risk Assessment (${item.risk_level})`,
+            detail: item.draftText || item.requestedRelief || item.reason || item.summary || item.action || "",
             date: rawDate.toLocaleDateString(),
             dateValue: rawDate.getTime(),
             ...item
@@ -1846,7 +1846,7 @@ function HistoryPage({ user }) {
 
   const filteredHistory = history.filter(item => {
     if (filter !== "all" && item.type !== filter) return false;
-    const haystack = [item.q, item.detail, item.subject, item.filename, item.complaintType, item.requestedRelief, item.reason, item.summary]
+    const haystack = [item.q, item.detail, item.subject, item.filename, item.schemeName, item.action, item.state, item.complaintType, item.requestedRelief, item.reason, item.summary]
       .filter(Boolean)
       .join(" ")
       .toLowerCase();
