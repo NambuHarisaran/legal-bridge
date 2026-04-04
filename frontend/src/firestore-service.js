@@ -183,6 +183,7 @@ export function subscribeToChat(uid, conversationId = 'default', callback) {
 export async function saveDocumentAnalysis(uid, filename, analysis) {
   try {
     const docRef = collection(db, 'users', uid, 'documents');
+    const ingestion = analysis?.ingestion || null;
     const result = await addDoc(docRef, {
       filename,
       summary: analysis.summary,
@@ -191,6 +192,10 @@ export async function saveDocumentAnalysis(uid, filename, analysis) {
       dates: analysis.dates,
       risks: analysis.risks,
       next_steps: analysis.next_steps,
+      ingestionMode: ingestion?.mode || null,
+      ingestionConfidence: typeof ingestion?.confidence === 'number' ? ingestion.confidence : null,
+      extractedChars: typeof ingestion?.extractedChars === 'number' ? ingestion.extractedChars : null,
+      extractedPreview: ingestion?.preview || null,
       savedAt: serverTimestamp()
     });
     return { success: true, id: result.id };

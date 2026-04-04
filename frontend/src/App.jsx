@@ -638,8 +638,8 @@ function HomePage({ setPage, user }) {
           <div style={{ display:"flex", gap:16, alignItems:"center" }}>
             <div style={{ flex:1 }}>
               {[
-                { color:C.riskLow,  label:"Weak factors", sub:"Missing documents" },
-                { color:C.riskMed,  label:"Problem haag bornat movies", sub:"from yolami cirus" },
+                { color:C.riskLow,  label:"Prepared documents", sub:"Core records are available" },
+                { color:C.riskMed,  label:"Pending actions", sub:"Legal notice or filing still pending" },
               ].map((r,i)=>(
                 <div key={i} style={{ display:"flex", gap:8, alignItems:"flex-start", marginBottom:10 }}>
                   <span style={{ width:8, height:8, borderRadius:"50%", background:r.color,
@@ -653,15 +653,15 @@ function HomePage({ setPage, user }) {
               <div style={{ display:"flex", gap:8, alignItems:"flex-start", marginBottom:12 }}>
                 <span style={{ fontSize:14 }}>📊</span>
                 <div>
-                  <div style={{ fontSize:12, fontWeight:600, color:C.text }}>Disorganised Progress</div>
-                  <div style={{ fontSize:11, color:C.muted }}>desum ipose ndaencias</div>
+                  <div style={{ fontSize:12, fontWeight:600, color:C.text }}>Case progress tracking</div>
+                  <div style={{ fontSize:11, color:C.muted }}>Track timeline and authority response status</div>
                 </div>
               </div>
               <div style={{ display:"flex", gap:8, alignItems:"flex-start" }}>
                 <span style={{ fontSize:14 }}>✅</span>
                 <div>
-                  <div style={{ fontSize:12, fontWeight:600, color:C.text }}>Matignencies Corrigas</div>
-                  <div style={{ fontSize:11, color:C.muted }}>Risk oure Mamt revioles</div>
+                  <div style={{ fontSize:12, fontWeight:600, color:C.text }}>Recommended next steps</div>
+                  <div style={{ fontSize:11, color:C.muted }}>Simple actions to reduce legal risk</div>
                 </div>
               </div>
             </div>
@@ -692,11 +692,11 @@ function HomePage({ setPage, user }) {
           <div style={{ background:"#F8FAFC", borderRadius:10, padding:"12px 14px",
             border:`1px solid ${C.border}`, marginBottom:12 }}>
             <div style={{ fontWeight:600, fontSize:12, color:C.blue, marginBottom:6 }}>
-              Aetplemed Legal keompenttanone?
+              Example legal guidance response
             </div>
-            {["Rule boce ohenor issuel tasmem ninkle, no oeterpactions the ehenle legant, sa nestion.",
-              "Utilishem agal oetomel tgal tmetoad ol nndes, sosporaht tnan agreement consumer phdile.",
-              "Delnis toasal legrant tntis thisr sna leglef lesus, armntal inclsants nnstiation aolstion..."
+            {["Collect all land records and identity proofs in one folder.",
+              "Send a written notice and keep acknowledgement proof.",
+              "If unresolved, approach legal aid or file before the proper authority."
             ].map((t,i)=>(
               <div key={i} style={{ display:"flex", gap:6, marginBottom:6 }}>
                 <span style={{ color:C.blue, fontWeight:700, flexShrink:0 }}>•</span>
@@ -709,7 +709,7 @@ function HomePage({ setPage, user }) {
             <span style={{ fontSize:12, color:C.muted }}>Suggested</span>
             <select style={{ fontSize:11, border:`1px solid ${C.border}`, borderRadius:6,
               padding:"2px 6px", color:C.muted, outline:"none" }}>
-              <option>Intered indie selesi?</option>
+              <option>Popular legal questions</option>
             </select>
           </div>
           {["Land boundary problem na enna panna?","Rental agreement egal syppain?","Police complaint egal poodem?"].map((s,i)=>(
@@ -905,6 +905,7 @@ function DocumentPage({ user, addHistory }) {
   const [paste, setPaste] = useState(false);
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [stage, setStage] = useState("idle");
   const allowedFileTypes = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
   const maxFileSize = 8 * 1024 * 1024;
 
@@ -946,11 +947,21 @@ function DocumentPage({ user, addHistory }) {
     const content = paste ? text : "";
     if (paste && !content) return;
     if (!paste && !file) return;
-    setLoading(true); setResult(null);
+    setLoading(true);
+    setResult(null);
+    setStage(paste ? "analysing_text" : "extracting");
+    let stageTimer = null;
     try {
+      if (!paste) {
+        stageTimer = setTimeout(() => setStage("analysing_text"), 1200);
+      }
+
       const data = paste
         ? await postApi("/api/analyse", { content })
         : await postApiUpload("/api/analyse-upload", file);
+
+      if (stageTimer) clearTimeout(stageTimer);
+      setStage("complete");
       setResult(data);
       
       // Save to Firestore
@@ -962,6 +973,8 @@ function DocumentPage({ user, addHistory }) {
       
       addHistory({ type:"doc", q:file?.name||"Pasted text", date:new Date().toLocaleDateString() });
     } catch (error) {
+      if (stageTimer) clearTimeout(stageTimer);
+      setStage("error");
       setResult({ summary:error?.message || "Analysis failed. Please try again.", key_points:[], parties:[], dates:[], risks:[], next_steps:[] });
     } finally {
       setLoading(false);
@@ -1060,10 +1073,31 @@ function DocumentPage({ user, addHistory }) {
         {loading && (
           <Card style={{ textAlign:"center",padding:48 }}>
             <Spinner size={32}/>
-            <p style={{ color:C.muted,marginTop:16,fontSize:14 }}>Reading and summarising your document…</p>
+            <p style={{ color:C.muted,marginTop:16,fontSize:14 }}>
+              {stage === "extracting" ? "Extracting text from your file…" : "Reading and summarising your document…"}
+            </p>
           </Card>
         )}
         {result && <>
+          {result.ingestion && (
+            <Card>
+              <h3 style={{ fontSize:14,fontWeight:700,color:C.text,margin:"0 0 10px" }}>🧠 Ingestion Details</h3>
+              <div style={{ display:"flex", flexWrap:"wrap", gap:8, marginBottom:10 }}>
+                <Badge color={C.blue}>Mode: {result.ingestion.mode || "unknown"}</Badge>
+                {typeof result.ingestion.confidence === "number" && (
+                  <Badge color={C.green}>Confidence: {Math.round(result.ingestion.confidence * 100)}%</Badge>
+                )}
+                {typeof result.ingestion.extractedChars === "number" && (
+                  <Badge color={C.amber}>Chars: {result.ingestion.extractedChars}</Badge>
+                )}
+              </div>
+              {result.ingestion.preview && (
+                <div style={{ fontSize:12, color:C.muted, lineHeight:1.6, background:"#F8FAFC", border:`1px solid ${C.border}`, borderRadius:8, padding:"10px 12px" }}>
+                  {result.ingestion.preview}
+                </div>
+              )}
+            </Card>
+          )}
           <Card>
             <h3 style={{ fontSize:14,fontWeight:700,color:C.text,margin:"0 0 10px" }}>📋 Summary</h3>
             <p style={{ fontSize:13,lineHeight:1.75,color:C.text,margin:0 }}>{result.summary}</p>
@@ -1398,6 +1432,24 @@ function ComplaintPage({ user }) {
     }
   }
 
+  function downloadDraft() {
+    if (!draft) return;
+    try {
+      const blob = new Blob([draft], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${form.complaintType || "complaint"}-draft.txt`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setMessage("Draft downloaded as a text file.");
+    } catch (error) {
+      setMessage(error?.message || "Could not download draft.");
+    }
+  }
+
   const inputStyle = { width:"100%", border:`1.5px solid ${C.border}`, borderRadius:10,
     padding:"12px 14px", fontSize:14, fontFamily:"inherit", outline:"none",
     boxSizing:"border-box", background:"#fff", color:C.text };
@@ -1473,12 +1525,15 @@ function ComplaintPage({ user }) {
 
         {message && <div style={{ background:"#EFF6FF", color:C.blue, padding:"12px 14px", borderRadius:10, marginBottom:14, fontSize:13 }}>{message}</div>}
 
-        <div style={{ display:"flex", gap:10 }}>
+        <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
           <button onClick={generateDraft} disabled={loading} style={{ flex:1, background:C.blue, color:"#fff", border:"none", borderRadius:10, padding:"12px", fontWeight:700, fontSize:14, cursor:"pointer", fontFamily:"inherit", opacity:loading?0.7:1 }}>
             {loading ? "Generating…" : "Generate Draft"}
           </button>
           <button onClick={copyDraft} disabled={!draft} style={{ flex:1, background:C.border, color:C.text, border:"none", borderRadius:10, padding:"12px", fontWeight:700, fontSize:14, cursor:"pointer", fontFamily:"inherit" }}>
             Copy Draft
+          </button>
+          <button onClick={downloadDraft} disabled={!draft} style={{ flex:1, background:C.light, color:C.text, border:"none", borderRadius:10, padding:"12px", fontWeight:700, fontSize:14, cursor:"pointer", fontFamily:"inherit" }}>
+            Download .txt
           </button>
         </div>
       </Card>

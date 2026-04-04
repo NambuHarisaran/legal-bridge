@@ -1,4 +1,3 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import {
   guardApiRequest,
   hasPromptInjectionPatterns,
@@ -6,9 +5,7 @@ import {
   safeLog,
   sendSafeError,
 } from "./middleware/request-security.js";
-
-const client = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
-const model = client.getGenerativeModel({ model: "gemini-3-flash-preview" });
+import { generateWithFallback } from "./lib/ai-client.js";
 
 function isRetryableQuotaError(err) {
   const status = Number(err?.status);
@@ -101,7 +98,7 @@ export default async function handler(req, res) {
       parts: [{ text: msg.content }]
     }));
 
-    const response = await model.generateContent({
+    const response = await generateWithFallback({
       contents: formattedMessages,
       systemInstruction: systemPrompt,
       generationConfig: {
@@ -110,7 +107,7 @@ export default async function handler(req, res) {
       },
     });
 
-    const text = response?.response?.text?.() || "Sorry, I could not process that. Please try again.";
+    const text = response?.text || "Sorry, I could not process that. Please try again.";
     return res.status(200).json({ reply: text });
   } catch (err) {
     safeLog("chat_error", {

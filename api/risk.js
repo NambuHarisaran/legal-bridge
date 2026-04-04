@@ -1,4 +1,3 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import {
   guardApiRequest,
   hasPromptInjectionPatterns,
@@ -6,9 +5,7 @@ import {
   safeLog,
   sendSafeError,
 } from "./middleware/request-security.js";
-
-const client = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
-const model = client.getGenerativeModel({ model: "gemini-3-flash-preview" });
+import { generateWithFallback } from "./lib/ai-client.js";
 
 function isRetryableQuotaError(err) {
   const status = Number(err?.status);
@@ -56,7 +53,7 @@ export default async function handler(req, res) {
 
   try {
     const { answers } = req.body;
-    const allowedKeys = new Set(["issue", "amount", "docs", "deadline", "action"]);
+    const allowedKeys = new Set(["issue", "amount", "docs", "deadline", "duration", "opponent", "action"]);
 
     if (!answers || typeof answers !== "object" || Array.isArray(answers)) {
       return sendSafeError(res, 400, "invalid_payload", "answers object is required");
@@ -96,7 +93,7 @@ export default async function handler(req, res) {
 - urgent_actions: array of exactly 3 specific immediate actions (strings)
 - long_term_advice: 1-2 sentence string`;
 
-    const response = await model.generateContent({
+    const response = await generateWithFallback({
       contents: [{
         role: "user",
         parts: [{ text: `Assess legal risk for this situation:\n${summary}` }]
@@ -108,7 +105,7 @@ export default async function handler(req, res) {
       },
     });
 
-    const raw = response?.response?.text?.() || "{}";
+    const raw = response?.text || "{}";
     const cleaned = raw.replace(/```json|```/g, "").trim();
     try {
       const parsed = JSON.parse(cleaned);

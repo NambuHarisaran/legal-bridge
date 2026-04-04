@@ -2,6 +2,10 @@ import { getFirebaseAdminAuth } from "./firebase-admin.js";
 
 const rateStore = new Map();
 
+function isDevAuthBypassEnabled() {
+  return process.env.NODE_ENV !== "production" && process.env.DEV_AUTH_BYPASS === "true";
+}
+
 const ENDPOINT_LIMITS = {
   chat: { windowMs: 60 * 1000, limit: 15 },
   analyse: { windowMs: 60 * 1000, limit: 8 },
@@ -110,11 +114,19 @@ export async function guardApiRequest(req, res, options) {
   } catch (error) {
     const lowered = String(error?.message || "").toLowerCase();
     if (lowered.includes("firebase admin is not configured")) {
-      sendSafeError(res, 503, "auth_unavailable", "Authentication service unavailable");
+      if (isDevAuthBypassEnabled()) {
+        req.user = {
+          uid: "dev-user",
+          email: "dev-user@local",
+        };
+      } else {
+        sendSafeError(res, 503, "auth_unavailable", "Authentication service unavailable");
+        return { ok: false };
+      }
+    } else {
+      sendSafeError(res, 401, "unauthorized", "Invalid or expired authorization token");
       return { ok: false };
     }
-    sendSafeError(res, 401, "unauthorized", "Invalid or expired authorization token");
-    return { ok: false };
   }
 
   if (!enforceRateLimit({ endpoint, uid: req.user.uid, ip })) {
