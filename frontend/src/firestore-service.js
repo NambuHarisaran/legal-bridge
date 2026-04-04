@@ -53,6 +53,7 @@ export async function createUserProfile(uid, email, name, photoURL = null) {
       email,
       name,
       photoURL,
+      role: 'user',
       phone: '',
       location: '',
       caseType: '',
@@ -278,6 +279,43 @@ export async function saveComplaintDraft(uid, draft) {
   }
 }
 
+// Scheme activity management
+export async function saveSchemeActivity(uid, activity) {
+  try {
+    const schemeRef = collection(db, 'users', uid, 'scheme_activity');
+    const result = await addDoc(schemeRef, {
+      schemeId: activity.schemeId,
+      schemeName: activity.schemeName,
+      action: activity.action,
+      state: activity.state || '',
+      portalUrl: activity.portalUrl || '',
+      createdAt: serverTimestamp(),
+    });
+    return { success: true, id: result.id };
+  } catch (error) {
+    console.error('Error saving scheme activity:', error);
+    const normalized = normalizeFirestoreError(error);
+    return { success: false, error: normalized.message, code: normalized.code };
+  }
+}
+
+export async function getSchemeActivity(uid) {
+  try {
+    const schemeRef = collection(db, 'users', uid, 'scheme_activity');
+    const snapshot = await getDocs(schemeRef);
+    const activities = snapshot.docs.map(doc => ({
+      id: doc.id,
+      type: 'scheme',
+      ...doc.data()
+    })).sort((a, b) => getTimeValue(b.createdAt) - getTimeValue(a.createdAt));
+    return { success: true, data: activities };
+  } catch (error) {
+    console.error('Error getting scheme activity:', error);
+    const normalized = normalizeFirestoreError(error);
+    return { success: false, error: normalized.message, code: normalized.code };
+  }
+}
+
 export async function getRiskAssessmentHistory(uid) {
   try {
     const q = collection(db, 'users', uid, 'risk_assessments');
@@ -342,11 +380,22 @@ export async function getQueryHistory(uid, type = 'all') {
       }));
       allHistory.push(...complaints);
     }
+
+    if (type === 'scheme' || type === 'all') {
+      const schemeRef = collection(db, 'users', uid, 'scheme_activity');
+      const schemeSnap = await getDocs(schemeRef);
+      const schemes = schemeSnap.docs.map(doc => ({
+        id: doc.id,
+        type: 'scheme',
+        ...doc.data()
+      }));
+      allHistory.push(...schemes);
+    }
     
     // Sort by timestamp
     allHistory.sort((a, b) => {
-      const timeA = getTimeValue(a.timestamp || a.savedAt || a.assessedAt || a.generatedAt);
-      const timeB = getTimeValue(b.timestamp || b.savedAt || b.assessedAt || b.generatedAt);
+      const timeA = getTimeValue(a.timestamp || a.savedAt || a.assessedAt || a.generatedAt || a.createdAt);
+      const timeB = getTimeValue(b.timestamp || b.savedAt || b.assessedAt || b.generatedAt || b.createdAt);
       return timeB - timeA;
     });
     

@@ -19,14 +19,25 @@ service cloud.firestore {
 
     function validUserProfile() {
       return request.resource.data.keys().hasOnly([
-        'name', 'email', 'phone', 'location', 'caseType', 'settings', 'createdAt', 'updatedAt'
+        'name', 'email', 'phone', 'location', 'caseType', 'role', 'settings', 'createdAt', 'updatedAt'
       ]) &&
       validShortString(request.resource.data.name, 120) &&
       validOptionalString(request.resource.data.email, 160) &&
       validOptionalString(request.resource.data.phone, 30) &&
       validOptionalString(request.resource.data.location, 120) &&
       validOptionalString(request.resource.data.caseType, 120) &&
+      validOptionalString(request.resource.data.role, 24) &&
       (request.resource.data.settings is map || !('settings' in request.resource.data));
+    }
+
+    function validUserProfileCreate() {
+      return validUserProfile() &&
+      (!('role' in request.resource.data) || request.resource.data.role == 'user');
+    }
+
+    function validUserProfileUpdate() {
+      return validUserProfile() &&
+      (!('role' in request.resource.data) || request.resource.data.role == resource.data.role);
     }
 
     function validChatDoc() {
@@ -63,9 +74,21 @@ service cloud.firestore {
       validOptionalString(request.resource.data.draftText, 10000);
     }
 
+    function validSchemeActivityDoc() {
+      return request.resource.data.keys().hasOnly([
+        'schemeId', 'schemeName', 'action', 'state', 'portalUrl', 'createdAt'
+      ]) &&
+      validShortString(request.resource.data.schemeId, 220) &&
+      validShortString(request.resource.data.schemeName, 220) &&
+      request.resource.data.action in ['saved', 'applied'] &&
+      validOptionalString(request.resource.data.state, 60) &&
+      validOptionalString(request.resource.data.portalUrl, 300);
+    }
+
     match /users/{uid} {
       allow read: if isOwner(uid);
-      allow create, update: if isOwner(uid) && validUserProfile();
+      allow create: if isOwner(uid) && validUserProfileCreate();
+      allow update: if isOwner(uid) && validUserProfileUpdate();
       allow delete: if false;
 
       match /chats/{docId} {
@@ -89,6 +112,12 @@ service cloud.firestore {
       match /complaints/{docId} {
         allow read: if isOwner(uid);
         allow create, update: if isOwner(uid) && validComplaintDoc();
+        allow delete: if false;
+      }
+
+      match /scheme_activity/{docId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validSchemeActivityDoc();
         allow delete: if false;
       }
 

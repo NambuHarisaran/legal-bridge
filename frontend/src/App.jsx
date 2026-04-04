@@ -46,11 +46,11 @@ const NAV = [
 ];
 
 const SCHEMES = [
-  { icon: "🌾", name: "PM Kisan Samman Nidhi Yojana",              desc: "₹6,000/year direct income support for small and marginal farmers.", tags: ["farmer", "income", "rural"] },
-  { icon: "🌿", name: "Pradhan Mantri Fasal Bima Yojana",          desc: "Crop insurance scheme providing financial support to farmers for crop loss.", tags: ["farmer", "crop", "insurance"] },
-  { icon: "🏗",  name: "Mahatma Gandhi National Rural Employment Guarantee Scheme", desc: "Guarantees 100 days of wage employment per year to rural households.", tags: ["rural", "wage", "employment"] },
-  { icon: "🏠", name: "PM Awas Yojana (Gramin)",                   desc: "Housing for all — financial aid to build pucca houses for BPL families.", tags: ["housing", "rural", "family"] },
-  { icon: "💊", name: "Ayushman Bharat – PM Jan Arogya Yojana",    desc: "Health coverage up to ₹5 lakh/year for eligible families.", tags: ["health", "medical", "family"] },
+  { icon: "🌾", name: "PM Kisan Samman Nidhi Yojana", desc: "₹6,000/year direct income support for small and marginal farmers.", tags: ["farmer", "income", "rural"], benefit: "Cash support", docs: ["Aadhaar", "Bank account", "Land records"], portalUrl: "https://pmkisan.gov.in/" },
+  { icon: "🌿", name: "Pradhan Mantri Fasal Bima Yojana", desc: "Crop insurance scheme providing financial support to farmers for crop loss.", tags: ["farmer", "crop", "insurance"], benefit: "Crop insurance", docs: ["Land details", "Crop information", "Bank account"], portalUrl: "https://pmfby.gov.in/" },
+  { icon: "🏗", name: "Mahatma Gandhi National Rural Employment Guarantee Scheme", desc: "Guarantees 100 days of wage employment per year to rural households.", tags: ["rural", "wage", "employment"], benefit: "Wage employment", docs: ["Job card", "Aadhaar", "Bank account"], portalUrl: "https://nrega.nic.in/" },
+  { icon: "🏠", name: "PM Awas Yojana (Gramin)", desc: "Housing for all — financial aid to build pucca houses for BPL families.", tags: ["housing", "rural", "family"], benefit: "Housing aid", docs: ["Aadhaar", "Income proof", "Householding proof"], portalUrl: "https://pmayg.nic.in/netiayHome/home.aspx" },
+  { icon: "💊", name: "Ayushman Bharat – PM Jan Arogya Yojana", desc: "Health coverage up to ₹5 lakh/year for eligible families.", tags: ["health", "medical", "family"], benefit: "Health coverage", docs: ["Aadhaar", "Ration card", "Family details"], portalUrl: "https://pmjay.gov.in/" },
 ];
 
 const FIR_STEPS = [
@@ -175,6 +175,20 @@ function getUserDisplayName(user) {
 
 function getUserInitial(user) {
   return getUserDisplayName(user).charAt(0).toUpperCase() || "U";
+}
+
+function getUserRole(profile) {
+  return String(profile?.role || "user").trim().toLowerCase() || "user";
+}
+
+function isAdminUser(profile) {
+  const role = getUserRole(profile);
+  return role === "admin" || role === "superadmin";
+}
+
+function openExternal(url) {
+  if (!url) return;
+  window.open(url, "_blank", "noopener,noreferrer");
 }
 
 async function postApi(path, payload) {
@@ -508,7 +522,7 @@ function LoginPage({ onLogin }) {
 /* ═══════════════════════════════════════════════════════
    SIDEBAR
 ═══════════════════════════════════════════════════════ */
-function Sidebar({ page, setPage, user, onLogout }) {
+function Sidebar({ page, setPage, user, onLogout, canAccessAdmin }) {
   return (
     <div style={{ width:220, flexShrink:0, background:C.blueSide,
       minHeight:"100vh", display:"flex", flexDirection:"column" }}>
@@ -527,6 +541,9 @@ function Sidebar({ page, setPage, user, onLogout }) {
       {/* Nav */}
       <nav style={{ flex:1, padding:"12px 0" }}>
         {NAV.map(item => {
+          if (item.id === "admin" && !canAccessAdmin) {
+            return null;
+          }
           const active = page === item.id;
           return (
             <button key={item.id} onClick={()=>setPage(item.id)}
@@ -1148,9 +1165,34 @@ function DocumentPage({ user, addHistory }) {
 /* ═══════════════════════════════════════════════════════
    GOVT SCHEMES PAGE
 ═══════════════════════════════════════════════════════ */
-function SchemesPage({ user }) {
+function SchemesPage({ user, addHistory }) {
   const [search, setSearch] = useState("");
   const [profile, setProfile] = useState(null);
+  const [activeTag, setActiveTag] = useState("all");
+  const [stateFilter, setStateFilter] = useState("all");
+  const [schemeActivity, setSchemeActivity] = useState([]);
+  const [savedSchemeIds, setSavedSchemeIds] = useState([]);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadActivity() {
+      if (!user?.uid) return;
+      try {
+        const { getSchemeActivity } = await import("./firestore-service.js");
+        const result = await getSchemeActivity(user.uid);
+        if (!active || !result.success) return;
+        setSchemeActivity(result.data || []);
+        setSavedSchemeIds([...new Set((result.data || []).filter(item => item.action === "saved").map(item => item.schemeId))]);
+      } catch (error) {
+        console.error("Failed to load scheme activity:", error);
+      }
+    }
+
+    loadActivity();
+    return () => { active = false; };
+  }, [user?.uid]);
 
   useEffect(() => {
     let active = true;
@@ -1162,6 +1204,10 @@ function SchemesPage({ user }) {
         const result = await getUserProfile(user.uid);
         if (active && result.success) {
           setProfile(result.data);
+          const guessedState = resolveStateFromLocation(result.data.location);
+          if (guessedState !== "all") {
+            setStateFilter(guessedState);
+          }
         }
       } catch (error) {
         console.error("Failed to load scheme profile:", error);
@@ -1172,11 +1218,74 @@ function SchemesPage({ user }) {
     return () => { active = false; };
   }, [user?.uid]);
 
-  const recommended = getRecommendedSchemes(profile);
+  const recommended = getRecommendedSchemes(profile, stateFilter);
+  const tags = ["all", ...new Set(SCHEMES.flatMap(item => item.tags || []))];
+  const states = ["all", "maharashtra", "tamil nadu", "karnataka", "kerala", "andhra pradesh", "telangana", "gujarat", "rajasthan", "punjab", "uttar pradesh", "west bengal"];
   const filtered = recommended.filter(s => {
-    const haystack = [s.name, s.desc, ...(s.tags || []), ...(s.matchReasons || [])].join(" ").toLowerCase();
-    return haystack.includes(search.toLowerCase());
+    const haystack = [s.name, s.stateNote, s.eligibilityNote, ...(s.tags || []), ...(s.matchReasons || [])].join(" ").toLowerCase();
+    const searchMatch = haystack.includes(search.toLowerCase());
+    const tagMatch = activeTag === "all" || (s.tags || []).includes(activeTag);
+    const targets = s.stateTargets || [];
+    const stateMatch = stateFilter === "all" || targets.includes("all") || targets.includes(stateFilter);
+    return searchMatch && tagMatch && stateMatch;
   });
+
+  function trackSchemeAction(scheme, action) {
+    setSchemeActivity(current => [{
+      schemeId: scheme.name,
+      schemeName: scheme.name,
+      action,
+      state: stateFilter,
+      portalUrl: scheme.portalUrl,
+      at: Date.now(),
+    }, ...current].slice(0, 200));
+
+    if (!user?.uid) return;
+    import("./firestore-service.js").then(async ({ saveSchemeActivity }) => {
+      const result = await saveSchemeActivity(user.uid, {
+        schemeId: scheme.name,
+        schemeName: scheme.name,
+        action,
+        state: stateFilter,
+        portalUrl: scheme.portalUrl,
+      });
+      if (!result.success) {
+        console.error("Failed to persist scheme activity:", result.error);
+      }
+    }).catch(error => {
+      console.error("Failed to import scheme activity saver:", error);
+    });
+  }
+
+  function saveScheme(scheme) {
+    if (savedSchemeIds.includes(scheme.name)) {
+      const next = savedSchemeIds.filter(id => id !== scheme.name);
+      setSavedSchemeIds(next);
+      setMessage("Scheme removed from saved list.");
+      return;
+    }
+    const next = [...savedSchemeIds, scheme.name];
+    setSavedSchemeIds(next);
+    trackSchemeAction(scheme, "saved");
+    addHistory({ type: "scheme", q: `Saved scheme: ${scheme.name}`, date: new Date().toLocaleDateString() });
+    setMessage("Scheme saved.");
+  }
+
+  function applyScheme(scheme) {
+    trackSchemeAction(scheme, "applied");
+    addHistory({ type: "scheme", q: `Applied intent: ${scheme.name}`, date: new Date().toLocaleDateString() });
+    setMessage(`Marked as applied: ${scheme.name}`);
+  }
+
+  async function copyPortalUrl(scheme) {
+    try {
+      await navigator.clipboard.writeText(scheme.portalUrl);
+      setMessage("Scheme portal link copied.");
+    } catch {
+      setMessage("Unable to copy portal link.");
+    }
+  }
+
   return (
     <div>
       <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20 }}>
@@ -1190,22 +1299,33 @@ function SchemesPage({ user }) {
               {profile.caseType || "Profile"} recommendation
             </Badge>
           )}
-          <button style={{ background:C.blue,color:"#fff",border:"none",borderRadius:8,
-            padding:"10px 18px",fontWeight:600,fontSize:13,cursor:"pointer",fontFamily:"inherit" }}>
-            Manage Legal Database
-          </button>
-          <button style={{ background:"#fff",color:C.text,border:`1px solid ${C.border}`,
-            borderRadius:8,padding:"10px 18px",fontWeight:600,fontSize:13,cursor:"pointer",fontFamily:"inherit" }}>
-            Update Schemes
-          </button>
+          <Badge color={C.blue}>Saved: {savedSchemeIds.length}</Badge>
         </div>
       </div>
+
+      {message && <div style={{ background:"#EFF6FF", color:C.blue, padding:"10px 12px", borderRadius:10, marginBottom:12, fontSize:13 }}>{message}</div>}
 
       <input value={search} onChange={e=>setSearch(e.target.value)}
         placeholder="Search schemes (e.g. farmer, housing, health)…"
         style={{ width:"100%",border:`1.5px solid ${C.border}`,borderRadius:10,
           padding:"12px 16px",fontSize:14,fontFamily:"inherit",outline:"none",
           boxSizing:"border-box",marginBottom:18 }}/>
+
+      <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:14 }}>
+        {tags.map(tag => (
+          <button key={tag} onClick={() => setActiveTag(tag)} style={{ border: activeTag === tag ? `2px solid ${C.blue}` : `1px solid ${C.border}`, borderRadius:999, background: activeTag === tag ? C.blueLight : "#fff", color: activeTag === tag ? C.blue : C.muted, padding:"6px 12px", fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>
+            {tag === "all" ? "All" : tag}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:14 }}>
+        {states.map(state => (
+          <button key={state} onClick={() => setStateFilter(state)} style={{ border: stateFilter === state ? `2px solid ${C.green}` : `1px solid ${C.border}`, borderRadius:999, background: stateFilter === state ? "#ECFDF5" : "#fff", color: stateFilter === state ? C.green : C.muted, padding:"6px 12px", fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>
+            {state === "all" ? "All States" : state.replace(/\b\w/g, char => char.toUpperCase())}
+          </button>
+        ))}
+      </div>
 
       <h3 style={{ fontSize:15,fontWeight:700,color:C.text,margin:"0 0 14px" }}>
         Government Schemes Recommendation
@@ -1223,18 +1343,44 @@ function SchemesPage({ user }) {
             </div>
             <div style={{ flex:1 }}>
               <div style={{ fontWeight:700,fontSize:14,color:C.text,marginBottom:4 }}>{s.name}</div>
-              <div style={{ fontSize:13,color:C.muted,lineHeight:1.6 }}>{s.desc}</div>
+              <div style={{ fontSize:13,color:C.muted,lineHeight:1.6 }}>{s.stateNote || s.desc}</div>
+              {s.eligibilityNote && (
+                <div style={{ marginTop:8, fontSize:12, color:C.text, lineHeight:1.6, background:"#F8FAFC", border:`1px solid ${C.border}`, borderRadius:8, padding:"8px 10px" }}>
+                  <strong>Eligibility:</strong> {s.eligibilityNote}
+                </div>
+              )}
+              <div style={{ display:"flex", flexWrap:"wrap", gap:8, marginTop:10 }}>
+                {s.benefit && <Badge color={C.green}>{s.benefit}</Badge>}
+                {s.docs?.slice(0, 3).map((doc, index) => <Badge key={index} color={C.amber}>{doc}</Badge>)}
+              </div>
               {s.matchReasons?.length > 0 && (
                 <div style={{ display:"flex", flexWrap:"wrap", gap:8, marginTop:10 }}>
                   {s.matchReasons.map((reason, index) => <Badge key={index} color={C.blue}>{reason}</Badge>)}
                 </div>
               )}
             </div>
-            <button style={{ background:C.blue,color:"#fff",border:"none",borderRadius:8,
-              padding:"8px 14px",fontSize:12,fontWeight:600,cursor:"pointer",
-              flexShrink:0,fontFamily:"inherit" }}>
-              Apply →
-            </button>
+            <div style={{ display:"flex", gap:8, flexDirection:"column" }}>
+              <button onClick={() => applyScheme(s)} style={{ background:C.blue,color:"#fff",border:"none",borderRadius:8,
+                padding:"8px 14px",fontSize:12,fontWeight:600,cursor:"pointer",
+                flexShrink:0,fontFamily:"inherit" }}>
+                Apply →
+              </button>
+              <button onClick={() => openExternal(s.portalUrl)} style={{ background:C.green,color:"#fff",border:"none",borderRadius:8,
+                padding:"8px 14px",fontSize:12,fontWeight:600,cursor:"pointer",
+                flexShrink:0,fontFamily:"inherit" }}>
+                Official Portal
+              </button>
+              <button onClick={() => copyPortalUrl(s)} style={{ background:"#fff",color:C.text,border:`1px solid ${C.border}`,borderRadius:8,
+                padding:"8px 14px",fontSize:12,fontWeight:600,cursor:"pointer",
+                flexShrink:0,fontFamily:"inherit" }}>
+                Copy Link
+              </button>
+              <button onClick={() => saveScheme(s)} style={{ background:"#fff",color:C.text,border:`1px solid ${C.border}`,borderRadius:8,
+                padding:"8px 14px",fontSize:12,fontWeight:600,cursor:"pointer",
+                flexShrink:0,fontFamily:"inherit" }}>
+                {savedSchemeIds.includes(s.name) ? "Saved" : "Save"}
+              </button>
+            </div>
           </Card>
         ))}
         {filtered.length===0&&<p style={{ textAlign:"center",color:C.muted,padding:32 }}>No schemes found.</p>}
@@ -1720,6 +1866,7 @@ function HistoryPage({ user }) {
     { key: "doc", label: "Docs", icon: "📄" },
     { key: "risk", label: "Risk", icon: "⚠" },
     { key: "complaint", label: "Complaints", icon: "📝" },
+    { key: "scheme", label: "Schemes", icon: "🏛" },
   ];
 
   return (
@@ -1767,14 +1914,14 @@ function HistoryPage({ user }) {
         <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
           {[...filteredHistory].reverse().map((h,i)=>(
             <Card key={i} style={{ display:"flex", alignItems:"center", gap:14 }}>
-              <span style={{ fontSize:22 }}>{h.type==="chat"?"💬":h.type==="doc"?"📄":h.type==="risk"?"⚠":"📝"}</span>
+              <span style={{ fontSize:22 }}>{h.type==="chat"?"💬":h.type==="doc"?"📄":h.type==="risk"?"⚠":h.type==="scheme"?"🏛":"📝"}</span>
               <div style={{ flex:1 }}>
                 <div style={{ fontSize:14, fontWeight:600, color:C.text }}>{h.q}</div>
                 {h.detail && <div style={{ fontSize:12, color:C.muted, marginTop:3, lineHeight:1.5 }}>{h.detail}</div>}
                 <div style={{ fontSize:12, color:C.muted, marginTop:4 }}>{h.date}</div>
               </div>
-              <Badge color={h.type==="chat"?C.blue:h.type==="doc"?C.green:h.type==="risk"?C.amber:C.red}>
-                {h.type==="chat"?"Chat":h.type==="doc"?"Document":h.type==="risk"?"Risk":"Complaint"}
+              <Badge color={h.type==="chat"?C.blue:h.type==="doc"?C.green:h.type==="risk"?C.amber:h.type==="scheme"?C.blueDeep:C.red}>
+                {h.type==="chat"?"Chat":h.type==="doc"?"Document":h.type==="risk"?"Risk":h.type==="scheme"?"Scheme":"Complaint"}
               </Badge>
             </Card>
           ))}
@@ -1787,12 +1934,115 @@ function HistoryPage({ user }) {
 /* ═══════════════════════════════════════════════════════
    ADMIN PAGE
 ═══════════════════════════════════════════════════════ */
-function AdminPage() {
+function AdminPage({ user }) {
+  const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState({ users: 1, chats: 0, docs: 0, risks: 0, complaints: 0, schemes: 0 });
+  const [logs, setLogs] = useState([]);
+  const [profile, setProfile] = useState(null);
+  const [guardLoading, setGuardLoading] = useState(true);
+
+  const allowed = isAdminUser(profile);
+
+  useEffect(() => {
+    loadAdminData();
+  }, [user?.uid]);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadRole() {
+      if (!user?.uid) return;
+      setGuardLoading(true);
+      try {
+        const { getUserProfile } = await import("./firestore-service.js");
+        const result = await getUserProfile(user.uid);
+        if (active && result.success) {
+          setProfile(result.data);
+        }
+      } catch (error) {
+        console.error("Failed to load admin profile:", error);
+      } finally {
+        if (active) setGuardLoading(false);
+      }
+    }
+
+    loadRole();
+    return () => { active = false; };
+  }, [user?.uid]);
+
+  async function loadAdminData() {
+    if (!user?.uid) return;
+    setLoading(true);
+    try {
+      const { getQueryHistory } = await import("./firestore-service.js");
+      const historyResult = await getQueryHistory(user.uid, "all");
+      const records = historyResult.success ? historyResult.data : [];
+      const { getSchemeActivity } = await import("./firestore-service.js");
+      const schemeResult = await getSchemeActivity(user.uid);
+      const schemes = schemeResult.success ? schemeResult.data : [];
+
+      const chats = records.filter(item => item.type === "chat").length;
+      const docs = records.filter(item => item.type === "document").length;
+      const risks = records.filter(item => item.type === "risk").length;
+      const complaints = records.filter(item => item.type === "complaint").length;
+
+      setStats({
+        users: 1,
+        chats,
+        docs,
+        risks,
+        complaints,
+        schemes: schemes.filter(item => item.action === "applied" || item.action === "saved").length,
+      });
+
+      const recentFromHistory = records.slice(0, 7).map(item => {
+        const rawDate = item.timestamp?.toDate?.() || item.savedAt?.toDate?.() || item.assessedAt?.toDate?.() || item.generatedAt?.toDate?.() || new Date();
+        return {
+          time: rawDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          action: item.type === "chat"
+            ? "Chat query submitted"
+            : item.type === "document"
+              ? `Document analysed${item.filename ? ` — ${item.filename}` : ""}`
+              : item.type === "risk"
+                ? `Risk score calculated${item.risk_level ? ` — ${item.risk_level}` : ""}`
+                : "Complaint draft generated",
+          user: getUserDisplayName(user),
+        };
+      });
+
+      const recentScheme = schemes.slice(0, 5).map(item => ({
+        time: new Date(item.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        action: `${item.action === "saved" ? "Scheme saved" : "Scheme apply intent"} — ${item.schemeName}`,
+        user: getUserDisplayName(user),
+      }));
+
+      setLogs([...recentScheme, ...recentFromHistory].slice(0, 10));
+    } catch (error) {
+      console.error("Failed to load admin data:", error);
+      setLogs([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <div>
       <SectionTitle>⚙ Admin Panel</SectionTitle>
+      <div style={{ color:C.muted, fontSize:13, margin:"-10px 0 14px" }}>Operational dashboard for your current account data.</div>
+      {guardLoading ? (
+        <Card style={{ marginBottom:16 }}>
+          <Spinner size={16} /> <span style={{ marginLeft:8, color:C.muted, fontSize:13 }}>Checking admin role…</span>
+        </Card>
+      ) : !allowed && (
+        <Card style={{ marginBottom:16, borderLeft:`4px solid ${C.amber}` }}>
+          <h3 style={{ fontSize:14, fontWeight:700, color:C.text, margin:"0 0 8px" }}>Restricted Access</h3>
+          <p style={{ margin:0, color:C.muted, fontSize:13, lineHeight:1.7 }}>
+            Your profile role is not set to admin. Update the user's Firestore profile role to admin or superadmin to unlock this route.
+          </p>
+        </Card>
+      )}
       <div style={{ display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14,marginBottom:24 }}>
-        {[["👥","Total Users","1,248"],["💬","Total Chats","8,430"],["📄","Docs Analysed","3,120"],["⚠","Risk Reports","2,090"],["🏛","Schemes Viewed","5,600"],["📋","FIR Filed","412"]].map(([icon,lbl,val])=>(
+        {[["👥","Total Users",String(stats.users)],["💬","Total Chats",String(stats.chats)],["📄","Docs Analysed",String(stats.docs)],["⚠","Risk Reports",String(stats.risks)],["🏛","Scheme Activity",String(stats.schemes)],["📋","Complaints",String(stats.complaints)]].map(([icon,lbl,val])=>(
           <Card key={lbl} style={{ textAlign:"center",padding:"22px 16px" }}>
             <div style={{ fontSize:28,marginBottom:8 }}>{icon}</div>
             <div style={{ fontSize:22,fontWeight:800,color:C.blue,fontFamily:"'Georgia',serif" }}>{val}</div>
@@ -1801,16 +2051,31 @@ function AdminPage() {
         ))}
       </div>
       <Card>
-        <h3 style={{ fontSize:15,fontWeight:700,color:C.text,margin:"0 0 14px" }}>Recent Activity Log</h3>
-        {[
-          { time:"2 min ago", action:"New user registered", user:"Kiran Kumar, Chennai" },
-          { time:"8 min ago", action:"Document analysed — Land agreement",  user:"Priya S, Madurai" },
-          { time:"15 min ago",action:"FIR guidance viewed",                 user:"Rajan M, Coimbatore" },
-          { time:"1 hr ago",  action:"Risk score calculated — High",        user:"Anbu K, Salem" },
-          { time:"2 hr ago",  action:"Scheme applied — PM Kisan",           user:"Selvi T, Trichy" },
-        ].map((log,i)=>(
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
+          <h3 style={{ fontSize:15,fontWeight:700,color:C.text,margin:0 }}>Recent Activity Log</h3>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+            <button onClick={loadAdminData} style={{ background:C.blue,color:"#fff",border:"none",borderRadius:8,padding:"8px 12px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit" }}>Refresh</button>
+            <button onClick={() => {
+              const payload = JSON.stringify({ stats, logs }, null, 2);
+              const blob = new Blob([payload], { type: "application/json;charset=utf-8" });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = "legal-bridge-admin-dashboard.json";
+              document.body.appendChild(a);
+              a.click();
+              a.remove();
+              URL.revokeObjectURL(url);
+            }} style={{ background:"#fff",color:C.text,border:`1px solid ${C.border}`,borderRadius:8,padding:"8px 12px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit" }}>Export</button>
+          </div>
+        </div>
+        {loading ? (
+          <div style={{ color:C.muted, fontSize:13 }}><Spinner size={16}/> Loading dashboard data…</div>
+        ) : logs.length === 0 ? (
+          <div style={{ color:C.muted, fontSize:13 }}>No activity yet. Use chat, analyser, risk, or schemes to populate logs.</div>
+        ) : logs.map((log,i)=>(
           <div key={i} style={{ display:"flex",gap:14,padding:"10px 0",
-            borderBottom:i<4?`1px solid ${C.border}`:"none",alignItems:"center" }}>
+            borderBottom:i<logs.length-1?`1px solid ${C.border}`:"none",alignItems:"center" }}>
             <span style={{ fontSize:12,color:C.muted,minWidth:72 }}>{log.time}</span>
             <div style={{ flex:1 }}>
               <div style={{ fontSize:13,fontWeight:600,color:C.text }}>{log.action}</div>
@@ -1831,6 +2096,8 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [page, setPage] = useState("home");
   const [history, setHistory] = useState([]);
+  const [profileData, setProfileData] = useState(null);
+  const [profileLoading, setProfileLoading] = useState(true);
 
   function addHistory(item) { setHistory(h=>[...h, item]); }
 
@@ -1839,19 +2106,60 @@ export default function App() {
     setUser(null);
   }
 
+  useEffect(() => {
+    let active = true;
+
+    async function loadProfileRole() {
+      if (!user?.uid) return;
+      setProfileLoading(true);
+      try {
+        const { getUserProfile } = await import("./firestore-service.js");
+        const result = await getUserProfile(user.uid);
+        if (active && result.success) {
+          setProfileData(result.data);
+        }
+      } catch (error) {
+        console.error("Failed to load profile for route guard:", error);
+      } finally {
+        if (active) setProfileLoading(false);
+      }
+    }
+
+    loadProfileRole();
+    return () => { active = false; };
+  }, [user?.uid]);
+
+  const adminAllowed = isAdminUser(profileData);
+
   if (!user) return <LoginPage onLogin={setUser}/>;
 
   const pages = {
     home:     <HomePage setPage={setPage} user={user}/>,
     chatbot:  <ChatbotPage user={user} addHistory={addHistory}/>,
     document: <DocumentPage user={user} addHistory={addHistory}/>,
-    schemes:  <SchemesPage user={user}/>,
+    schemes:  <SchemesPage user={user} addHistory={addHistory}/>,
     fir:      <FIRPage/>,
     complaint:<ComplaintPage user={user}/>,
     risk:     <RiskPage user={user} addHistory={addHistory}/>,
     history:  <HistoryPage user={user}/>,
     profile:  <ProfilePage user={user} onProfileUpdate={u=>setUser(u)}/>,
-    admin:    <AdminPage/>,
+    admin:    adminAllowed ? <AdminPage user={user}/> : (
+      <Card style={{ maxWidth:720 }}>
+        <SectionTitle>⚙ Admin Panel</SectionTitle>
+        {profileLoading ? (
+          <div style={{ color:C.muted }}>Checking your admin role…</div>
+        ) : (
+          <>
+            <p style={{ color:C.muted, fontSize:13, lineHeight:1.7, marginTop:0 }}>
+              Access denied. Your Firestore profile role is <strong>{getUserRole(profileData)}</strong>.
+            </p>
+            <p style={{ color:C.muted, fontSize:13, lineHeight:1.7 }}>
+              Set the profile role to <strong>admin</strong> or <strong>superadmin</strong> in Firestore to unlock this page.
+            </p>
+          </>
+        )}
+      </Card>
+    ),
   };
 
   const pageTitle = NAV.find(n=>n.id===page)?.label || "Home";
@@ -1869,7 +2177,7 @@ export default function App() {
         select{background:#fff;font-family:inherit}
       `}</style>
 
-      <Sidebar page={page} setPage={setPage} user={user} onLogout={handleLogout}/>
+      <Sidebar page={page} setPage={setPage} user={user} onLogout={handleLogout} canAccessAdmin={adminAllowed}/>
 
       <div style={{ flex:1, display:"flex", flexDirection:"column", minWidth:0, minHeight:"100vh" }}>
         <TopBar title={pageTitle} user={user} onProfileClick={() => setPage("profile")}/>
