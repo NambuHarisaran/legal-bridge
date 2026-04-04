@@ -1,7 +1,4 @@
-import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
 import multer from "multer";
 import {
   guardApiRequest,
@@ -60,7 +57,6 @@ export default async function handler(req, res) {
   });
   if (!guard.ok) return;
 
-  let tempPath = null;
   try {
     await runUpload(req, res);
     const file = req.file;
@@ -78,8 +74,6 @@ export default async function handler(req, res) {
     }
 
     const cleanName = stripUnsafeName(file.originalname);
-    tempPath = path.join(os.tmpdir(), `${randomUUID()}-${cleanName}`);
-    await fs.writeFile(tempPath, file.buffer);
 
     if (hasPromptInjectionPatterns(cleanName)) {
       return sendSafeError(res, 400, "invalid_upload", "Unsafe file metadata detected");
@@ -124,9 +118,5 @@ export default async function handler(req, res) {
       status: error?.status,
     });
     return sendSafeError(res, 500, "upload_analysis_failed", "Unable to process uploaded file");
-  } finally {
-    if (tempPath) {
-      await fs.unlink(tempPath).catch(() => {});
-    }
   }
 }

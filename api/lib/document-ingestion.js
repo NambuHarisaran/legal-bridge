@@ -57,26 +57,32 @@ async function extractTextFromPdfWithGemini(buffer) {
 }
 
 async function extractTextFromPdf(buffer) {
-  const parser = new PDFParse({ data: buffer });
-  let parsed;
-  try {
-    parsed = await parser.getText();
-  } finally {
-    await parser.destroy().catch(() => {});
-  }
+  let parsedText = "";
 
-  const parsedText = removePdfNoise(normalizeText(parsed?.text || ""));
-  if (!looksLikeLowSignalPdfText(parsedText)) {
-    return {
-      text: parsedText,
-      source: "pdf_text",
-      confidence: parsedText.length > 900 ? 0.95 : 0.85,
-    };
+  try {
+    const parser = new PDFParse({ data: buffer });
+    let parsed;
+    try {
+      parsed = await parser.getText();
+    } finally {
+      await parser.destroy().catch(() => {});
+    }
+
+    parsedText = removePdfNoise(normalizeText(parsed?.text || ""));
+    if (!looksLikeLowSignalPdfText(parsedText)) {
+      return {
+        text: parsedText,
+        source: "pdf_text",
+        confidence: parsedText.length > 900 ? 0.95 : 0.85,
+      };
+    }
+  } catch {
+    parsedText = "";
   }
 
   try {
     const geminiText = await extractTextFromPdfWithGemini(buffer);
-    if (geminiText && geminiText.length > parsedText.length) {
+    if (geminiText && geminiText.length > Math.max(parsedText.length, 80)) {
       return {
         text: geminiText,
         source: "pdf_vision_extract",
@@ -91,7 +97,7 @@ async function extractTextFromPdf(buffer) {
   return {
     text,
     source: "pdf_text",
-    confidence: text.length > 400 ? 0.8 : 0.6,
+    confidence: text.length > 400 ? 0.8 : 0.5,
   };
 }
 
