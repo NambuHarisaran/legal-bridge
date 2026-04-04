@@ -57,6 +57,9 @@ export default async function handler(req, res) {
   });
   if (!guard.ok) return;
 
+  let cleanName = "uploaded-document";
+  let detectedMime = "application/octet-stream";
+
   try {
     await runUpload(req, res);
     const file = req.file;
@@ -73,7 +76,8 @@ export default async function handler(req, res) {
       return sendSafeError(res, 413, "payload_too_large", "Uploaded file is too large");
     }
 
-    const cleanName = stripUnsafeName(file.originalname);
+    cleanName = stripUnsafeName(file.originalname);
+    detectedMime = String(file.mimetype || "application/octet-stream");
 
     if (hasPromptInjectionPatterns(cleanName)) {
       return sendSafeError(res, 400, "invalid_upload", "Unsafe file metadata detected");
@@ -110,6 +114,16 @@ export default async function handler(req, res) {
       },
     });
   } catch (error) {
+    const message = String(error?.message || "");
+
+    if (message.toLowerCase().includes("unsupported file type")) {
+      return sendSafeError(res, 400, "invalid_upload", "Only PDF and image uploads are allowed");
+    }
+
+    if (String(error?.code || "") === "LIMIT_FILE_SIZE") {
+      return sendSafeError(res, 413, "payload_too_large", "Uploaded file is too large");
+    }
+
     safeLog("analyse_upload_error", {
       path: req.path,
       uid: req.user?.uid,
@@ -117,6 +131,18 @@ export default async function handler(req, res) {
       message: error?.message,
       status: error?.status,
     });
-    return sendSafeError(res, 500, "upload_analysis_failed", "Unable to process uploaded file");
+
+    // Do not hard-fail user uploads when extraction/model calls are temporarily unavailable.
+    const fallback = buildFallbackAnalysis(cleanName);
+    return res.status(200).json({
+      ...fallback,
+      ingestion: {
+        mode: "upload_fallback",
+        confidence: 0,
+        filename: cleanName,
+        mimeType: detectedMime,
+        extractedChars: 0,
+      },
+    });
   }
 }
