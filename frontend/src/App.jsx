@@ -214,11 +214,11 @@ async function postApi(path, payload) {
   }
 
   if (!response.ok) {
-    throw new Error(data?.error || `Request failed (${response.status})`);
+    throw new Error(data?.message || data?.error || `Request failed (${response.status})`);
   }
 
   if (data?.error) {
-    throw new Error(data.error);
+    throw new Error(data.message || data.error);
   }
 
   return data || {};
