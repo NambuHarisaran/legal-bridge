@@ -148,7 +148,26 @@ Before clicking Deploy:
 4. Value: paste your `sk-ant-...` key
 5. Make sure **Production**, **Preview**, and **Development** are all checked
 
-### 6d. Deploy
+### 6d. Add Firebase Admin Variables (REQUIRED for authenticated API routes)
+If this is missing, protected endpoints return:
+`Authentication service unavailable`
+
+Add one of the following credential formats in Vercel Project Settings -> Environment Variables:
+
+Option A (recommended):
+- `FIREBASE_SERVICE_ACCOUNT_KEY` = full Firebase service account JSON in one line
+
+Option B (split values, easiest in dashboard forms):
+- `FIREBASE_PROJECT_ID`
+- `FIREBASE_CLIENT_EMAIL`
+- `FIREBASE_PRIVATE_KEY` (paste key with `\\n` line breaks)
+
+Also keep these set:
+- `DEV_AUTH_BYPASS=false`
+
+After adding variables, redeploy the latest commit.
+
+### 6e. Deploy
 1. Click **Deploy**
 2. Wait ~2 minutes for the build to finish
 3. Vercel gives you a live URL like:
